@@ -1,0 +1,39 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: dybala_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: dybala123
+      MYSQL_DATABASE: dybala_bms
+      MYSQL_USER: dybala
+      MYSQL_PASSWORD: dybala123
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pdybala123"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    container_name: dybala_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "mysql://root:dybala123@db:3306/dybala_bms"
+      JWT_SECRET: "dybala-bms-super-secret-jwt-key-change-in-production-2026"
+      NEXT_PUBLIC_APP_NAME: "Dybala BMS"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+    driver: local

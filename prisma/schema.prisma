@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  STAFF
+}
+
+enum OrderStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum SessionStatus {
+  OPEN
+  CLOSED
+}
+
+// ---------- Outlets ----------
+model OutletType {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  code    String   @unique
+  active  Boolean  @default(true)
+  outlets Outlet[]
+}
+
+model Outlet {
+  id          Int        @id @default(autoincrement())
+  name        String     @unique
+  code        String     @unique
+  typeId      Int
+  type        OutletType @relation(fields: [typeId], references: [id])
+  posEnabled  Boolean    @default(false)
+  hasTables   Boolean    @default(false)
+  usesRecipes Boolean    @default(true)
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+
+  terminals     Terminal[]
+  products      OutletProduct[]
+  users         UserOutlet[]
+  sales         Sale[]
+  orders        Order[]
+  tables        Table[]
+  purchases     Purchase[]
+  stockLogs     StockLog[]
+  expenses      Expense[]
+  transfersOut  StockTransfer[] @relation("TransferFrom")
+  transfersIn   StockTransfer[] @relation("TransferTo")
+}
+
+model Terminal {
+  id       Int     @id @default(autoincrement())
+  outletId Int
+  outlet   Outlet  @relation(fields: [outletId], references: [id])
+  name     String
+  active   Boolean @default(true)
+  sales    Sale[]
+  sessions TableSession[]
+
+  @@unique([outletId, name])
+}
+
+model OutletProduct {
+  id        Int     @id @default(autoincrement())
+  outletId  Int
+  outlet    Outlet  @relation(fields: [outletId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+  stock     Float   @default(0)
+  minStock  Float   @default(5)
+  price     Float?  // null = use Product.price
+  active    Boolean @default(true)
+
+  @@unique([outletId, productId])
+}
+
+model UserOutlet {
+  userId   Int
+  user     User   @relation(fields: [userId], references: [id])
+  outletId Int
+  outlet   Outlet @relation(fields: [outletId], references: [id])
+
+  @@id([userId, outletId])
+}
+
+model StockTransfer {
+  id           Int      @id @default(autoincrement())
+  fromOutletId Int
+  fromOutlet   Outlet   @relation("TransferFrom", fields: [fromOutletId], references: [id])
+  toOutletId   Int
+  toOutlet     Outlet   @relation("TransferTo", fields: [toOutletId], references: [id])
+  note         String?
+  createdAt    DateTime @default(now())
+  items        StockTransferItem[]
+}
+
+model StockTransferItem {
+  id         Int           @id @default(autoincrement())
+  transferId Int
+  transfer   StockTransfer @relation(fields: [transferId], references: [id])
+  productId  Int
+  product    Product       @relation(fields: [productId], references: [id])
+  quantity   Float
+}
+
+// ---------- Users ----------
+model User {
+  id          Int      @id @default(autoincrement())
+  name        String
+  email       String   @unique
+  password    String
+  role        Role     @default(STAFF)
+  active      Boolean  @default(true)
+  permissions Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sales          Sale[]
+  orders         Order[]
+  outlets        UserOutlet[]
+  openedSessions TableSession[]  @relation("SessionOpenedBy")
+  closedSessions TableSession[]  @relation("SessionClosedBy")
+  creditPayments CreditPayment[] @relation("CreditPayments")
+}
+
+// ---------- Catalog (shared) ----------
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  type      String    @default("product")
+  createdAt DateTime  @default(now())
+  products  Product[]
+}
+
+model Product {
+  id         Int       @id @default(autoincrement())
+  name       String
+  sku        String?   @unique
+  categoryId Int?
+  category   Category? @relation(fields: [categoryId], references: [id])
+  type       String    @default("finished")
+  price      Float     @default(0)   // default selling price
+  costPrice  Float     @default(0)
+  unit       String    @default("piece")
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  outletProducts  OutletProduct[]
+  saleItems       SaleItem[]
+  orderItems      OrderItem[]
+  stockLogs       StockLog[]
+  recipeItems     RecipeItem[] @relation("RecipeProduct")
+  ingredients     RecipeItem[] @relation("RecipeIngredient")
+  tableOrderItems TableOrderItem[]
+  transferItems   StockTransferItem[]
+}
+
+model RecipeItem {
+  id           Int     @id @default(autoincrement())
+  productId    Int
+  product      Product @relation("RecipeProduct", fields: [productId], references: [id])
+  ingredientId Int
+  ingredient   Product @relation("RecipeIngredient", fields: [ingredientId], references: [id])
+  quantity     Float
+  unit         String
+}
+
+// ---------- Sales ----------
+model Sale {
+  id            Int       @id @default(autoincrement())
+  outletId      Int
+  outlet        Outlet    @relation(fields: [outletId], references: [id])
+  terminalId    Int?
+  terminal      Terminal? @relation(fields: [terminalId], references: [id])
+  userId        Int
+  user          User      @relation(fields: [userId], references: [id])
+  customerId    Int?
+  customer      Customer? @relation(fields: [customerId], references: [id])
+  total         Float
+  discount      Float     @default(0)
+  paymentMethod String    @default("cash")
+  pointsEarned  Float     @default(0)
+  note          String?
+  createdAt     DateTime  @default(now())
+  items         SaleItem[]
+
+  @@index([outletId, createdAt])
+}
+
+model SaleItem {
+  id        Int     @id @default(autoincrement())
+  saleId    Int
+  sale      Sale    @relation(fields: [saleId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Float
+  price     Float
+  subtotal  Float
+}
+
+model Order {
+  id            Int           @id @default(autoincrement())
+  orderNumber   String        @unique   // prefix with outlet code: SEK-0001
+  outletId      Int
+  outlet        Outlet        @relation(fields: [outletId], references: [id])
+  customerId    Int?
+  customer      Customer?     @relation(fields: [customerId], references: [id])
+  customerName  String
+  customerPhone String?
+  userId        Int
+  user          User          @relation(fields: [userId], references: [id])
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  totalAmount   Float
+  advancePaid   Float         @default(0)
+  balanceDue    Float         @default(0)
+  deliveryDate  DateTime?
+  note          String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  items         OrderItem[]
+
+  @@index([outletId, status])
+}
+
+model OrderItem {
+  id        Int      @id @default(autoincrement())
+  orderId   Int
+  order     Order    @relation(fields: [orderId], references: [id])
+  productId Int?
+  product   Product? @relation(fields: [productId], references: [id])
+  name      String
+  quantity  Float
+  price     Float
+  subtotal  Float
+}
+
+// ---------- Customers (shared) ----------
+model Customer {
+  id          Int      @id @default(autoincrement())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  type        String   @default("regular")
+  points      Float    @default(0)
+  creditLimit Float    @default(0)
+  creditUsed  Float    @default(0)
+  createdAt   DateTime @default(now())
+  orders        Order[]
+  sales         Sale[]
+  tableSessions TableSession[]
+}
+
+// ---------- Vendor / purchasing ----------
+model Supplier {
+  id        Int        @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime   @default(now())
+  purchases Purchase[]
+}
+
+model Purchase {
+  id         Int       @id @default(autoincrement())
+  outletId   Int
+  outlet     Outlet    @relation(fields: [outletId], references: [id])
+  supplierId Int?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  total      Float
+  paid       Float     @default(0)
+  due        Float     @default(0)
+  note       String?
+  createdAt  DateTime  @default(now())
+  items      PurchaseItem[]
+}
+
+model PurchaseItem {
+  id         Int      @id @default(autoincrement())
+  purchaseId Int
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+  productId  Int
+  name       String
+  quantity   Float
+  price      Float
+  subtotal   Float
+}
+
+model StockLog {
+  id        Int      @id @default(autoincrement())
+  outletId  Int
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+  type      String   // IN, OUT, ADJUSTMENT, TRANSFER_IN, TRANSFER_OUT
+  quantity  Float
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([outletId, createdAt])
+}
+
+model Expense {
+  id          Int      @id @default(autoincrement())
+  outletId    Int
+  outlet      Outlet   @relation(fields: [outletId], references: [id])
+  category    String
+  amount      Float
+  description String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+}
+
+// ---------- Tables ----------
+model Table {
+  id        Int      @id @default(autoincrement())
+  outletId  Int
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
+  name      String
+  capacity  Int      @default(4)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  sessions  TableSession[]
+
+  @@unique([outletId, name])
+}
+
+model TableSession {
+  id             Int           @id @default(autoincrement())
+  tableId        Int
+  table          Table         @relation(fields: [tableId], references: [id])
+  terminalId     Int?
+  terminal       Terminal?     @relation(fields: [terminalId], references: [id])
+  customerId     Int?
+  customer       Customer?     @relation(fields: [customerId], references: [id])
+  customerName   String?
+  openedById     Int
+  openedBy       User          @relation("SessionOpenedBy", fields: [openedById], references: [id])
+  closedById     Int?
+  closedBy       User?         @relation("SessionClosedBy", fields: [closedById], references: [id])
+  status         SessionStatus @default(OPEN)
+  totalAmount    Float         @default(0)
+  discount       Float         @default(0)
+  grandTotal     Float         @default(0)
+  paymentMethod  String        @default("cash")
+  note           String?
+  openedAt       DateTime      @default(now())
+  closedAt       DateTime?
+  paidAmount     Float         @default(0)
+  creditAmount   Float         @default(0)
+  creditPaid     Boolean       @default(false)
+  orders         TableOrder[]
+  creditPayments CreditPayment[]
+
+  @@index([status])
+}
+
+model TableOrder {
+  id          Int              @id @default(autoincrement())
+  sessionId   Int
+  session     TableSession     @relation(fields: [sessionId], references: [id])
+  roundNumber Int
+  note        String?
+  createdAt   DateTime         @default(now())
+  items       TableOrderItem[]
+}
+
+model TableOrderItem {
+  id        Int        @id @default(autoincrement())
+  orderId   Int
+  order     TableOrder @relation(fields: [orderId], references: [id])
+  productId Int?
+  product   Product?   @relation(fields: [productId], references: [id])
+  name      String
+  quantity  Float
+  price     Float
+  subtotal  Float
+}
+
+model CreditPayment {
+  id           Int          @id @default(autoincrement())
+  sessionId    Int
+  session      TableSession @relation(fields: [sessionId], references: [id])
+  amount       Float
+  note         String?
+  createdAt    DateTime     @default(now())
+  recordedById Int
+  recordedBy   User         @relation("CreditPayments", fields: [recordedById], references: [id])
+}
