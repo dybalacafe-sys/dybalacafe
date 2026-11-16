@@ -27,6 +27,35 @@ yarn-error.log*
 # local env files
 .env*.local
 .env
+.env.test
+.env*.test*
+
+# agent skills & tool configs
+.agents/
+skills-lock.json
+.gemini/
+
+# ide & editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# debug & logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# database dumps & backups
+*.sql.gz
+*.dump
+backup_*.sql
+
+# static analysis & linter cache
+.qodana/
 
 # vercel
 .vercel
