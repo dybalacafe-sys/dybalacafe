@@ -16,6 +16,13 @@ import { seedDemoData } from './seeds/04-demo-data'
 const prisma = new PrismaClient()
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PROD_SEED !== 'true') {
+    console.error('⛔ Refusing to seed database in PRODUCTION mode.')
+    console.error('Seeding in production could reset product inventory and overwrite operational records.')
+    console.error('To force seeding, set ALLOW_PROD_SEED=true: ALLOW_PROD_SEED=true npm run seed')
+    process.exit(1)
+  }
+
   console.log('🚀 Starting Modular Database Seeding Pipeline...\n')
   const startTime = Date.now()
 
