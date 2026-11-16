@@ -184,7 +184,7 @@ export async function seedInventory(client: PrismaClient = prisma) {
     for (const outlet of outlets) {
       await client.outletProduct.upsert({
         where: { outletId_productId: { outletId: outlet.id, productId: product.id } },
-        update: { stock: rm.defaultStock, minStock: rm.minStock },
+        update: { minStock: rm.minStock },
         create: {
           outletId: outlet.id,
           productId: product.id,
@@ -245,7 +245,7 @@ export async function seedInventory(client: PrismaClient = prisma) {
       const outletStock = cafe && outlet.id === cafe.id ? Math.floor(fg.defaultStock * 0.8) : fg.defaultStock
       await client.outletProduct.upsert({
         where: { outletId_productId: { outletId: outlet.id, productId: product.id } },
-        update: { stock: outletStock, price: fg.price },
+        update: { price: fg.price },
         create: {
           outletId: outlet.id,
           productId: product.id,
