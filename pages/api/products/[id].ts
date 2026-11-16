@@ -1,12 +1,23 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
   const id = Number(req.query.id)
-  const currentOutletId = await getOutletIdFromRequest(req).catch(() => 1)
+  if (!id || isNaN(id)) return res.status(400).json({ error: 'Invalid product ID' })
+
+  let currentOutletId: number
+  try {
+    currentOutletId = await getOutletIdFromRequest(req, user)
+  } catch (err: unknown) {
+    return res.status(403).json({ error: err instanceof Error ? err.message : 'Forbidden: Outlet access denied' })
+  }
 
   if (req.method === 'GET') {
+    if (!can(user.permissions, user.role, 'inventory', 'view')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view product details' })
+    }
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
@@ -58,54 +69,87 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
   }
 
   if (req.method === 'PUT') {
-    if (!['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return res.status(403).json({ error: 'Forbidden' })
+    if (!can(user.permissions, user.role, 'inventory', 'edit')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to edit products' })
+    }
+
+    const existing = await prisma.product.findUnique({ where: { id } })
+    if (!existing) return res.status(404).json({ error: 'Product not found' })
+
     const { name, sku, categoryId, type, price, costPrice, unit, minStock, active, recipeItems } = req.body
-    const product = await prisma.product.update({
-      where: { id },
-      data: {
-        name,
-        sku: sku || null,
-        categoryId: categoryId ? Number(categoryId) : null,
-        type,
-        price: Number(price),
-        costPrice: Number(costPrice),
-        unit,
-        active,
-      },
-      include: { category: true },
+
+    if (price !== undefined && (isNaN(Number(price)) || Number(price) < 0)) {
+      return res.status(400).json({ error: 'Price must be a non-negative number' })
+    }
+    if (costPrice !== undefined && (isNaN(Number(costPrice)) || Number(costPrice) < 0)) {
+      return res.status(400).json({ error: 'Cost price must be a non-negative number' })
+    }
+    if (minStock !== undefined && (isNaN(Number(minStock)) || Number(minStock) < 0)) {
+      return res.status(400).json({ error: 'Min stock must be a non-negative number' })
+    }
+
+    const product = await prisma.$transaction(async (tx) => {
+      const p = await tx.product.update({
+        where: { id },
+        data: {
+          ...(name !== undefined && { name: String(name).trim() }),
+          ...(sku !== undefined && { sku: sku ? String(sku).trim() : null }),
+          ...(categoryId !== undefined && { categoryId: categoryId ? Number(categoryId) : null }),
+          ...(type !== undefined && { type }),
+          ...(price !== undefined && { price: Number(price) }),
+          ...(costPrice !== undefined && { costPrice: Number(costPrice) }),
+          ...(unit !== undefined && { unit }),
+          ...(active !== undefined && { active: Boolean(active) }),
+        },
+        include: { category: true },
+      })
+
+      if (minStock !== undefined) {
+        await tx.outletProduct.upsert({
+          where: { outletId_productId: { outletId: currentOutletId, productId: id } },
+          update: { minStock: Number(minStock) },
+          create: { outletId: currentOutletId, productId: id, stock: 0, minStock: Number(minStock) },
+        })
+      }
+
+      if (type === 'finished' && Array.isArray(recipeItems)) {
+        await tx.recipeItem.deleteMany({ where: { productId: id } })
+        if (recipeItems.length > 0) {
+          await tx.recipeItem.createMany({
+            data: recipeItems.map((r: { ingredientId: number; quantity: number; unit: string }) => ({
+              productId: id,
+              ingredientId: Number(r.ingredientId),
+              quantity: Number(r.quantity),
+              unit: r.unit || 'piece',
+            })),
+          })
+        }
+      }
+
+      return p
     })
 
-    // Update OutletProduct minStock for the outlet
-    if (minStock !== undefined) {
-      await prisma.outletProduct.upsert({
-        where: { outletId_productId: { outletId: currentOutletId, productId: id } },
-        update: { minStock: Number(minStock) },
-        create: { outletId: currentOutletId, productId: id, stock: 0, minStock: Number(minStock) },
-      })
-    }
-
-    // Replace recipe items
-    await prisma.recipeItem.deleteMany({ where: { productId: id } })
-    if (type === 'finished' && Array.isArray(recipeItems) && recipeItems.length > 0) {
-      await prisma.recipeItem.createMany({
-        data: recipeItems.map((r: { ingredientId: number; quantity: number; unit: string }) => ({
-          productId: id,
-          ingredientId: Number(r.ingredientId),
-          quantity: Number(r.quantity),
-          unit: r.unit,
-        })),
-      })
-    }
     return res.status(200).json(product)
   }
 
   if (req.method === 'DELETE') {
-    if (user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Forbidden' })
+    if (!can(user.permissions, user.role, 'inventory', 'delete')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to delete products' })
+    }
+
+    const existing = await prisma.product.findUnique({ where: { id } })
+    if (!existing) return res.status(404).json({ error: 'Product not found' })
+
     // Deactivate from this outlet
-    await prisma.outletProduct.updateMany({
+    const result = await prisma.outletProduct.updateMany({
       where: { outletId: currentOutletId, productId: id },
       data: { active: false },
     })
+
+    if (result.count === 0) {
+      return res.status(404).json({ error: 'Product not found in this outlet' })
+    }
+
     return res.status(200).json({ message: 'Deleted from outlet' })
   }
 

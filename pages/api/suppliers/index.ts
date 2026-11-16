@@ -1,11 +1,16 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
-async function handler(req: NextApiRequest, res: NextApiResponse, _user: JWTPayload) {
-  const outletId = await getOutletIdFromRequest(req)
+async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
+  const outletId = await getOutletIdFromRequest(req, user)
 
   if (req.method === 'GET') {
+    if (!can(user.permissions, user.role, 'expenses', 'view')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view suppliers' })
+    }
+
     const { search } = req.query
     const where: Record<string, unknown> = {}
     if (search) {
@@ -52,6 +57,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, _user: JWTPayl
   }
 
   if (req.method === 'POST') {
+    if (!can(user.permissions, user.role, 'expenses', 'edit')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to manage suppliers' })
+    }
+
     const { name, phone, email, address } = req.body
     if (!name || typeof name !== 'string') {
       return res.status(400).json({ error: 'Vendor name is required' })

@@ -1,15 +1,23 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
-  const currentOutletId = await getOutletIdFromRequest(req).catch(() => 1)
+  let currentOutletId: number
+  try {
+    currentOutletId = await getOutletIdFromRequest(req, user)
+  } catch (err: unknown) {
+    return res.status(403).json({ error: err instanceof Error ? err.message : 'Forbidden: Outlet access denied' })
+  }
 
   if (req.method === 'GET') {
+    if (!can(user.permissions, user.role, 'inventory', 'view')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view products' })
+    }
     const { type, search, categoryId } = req.query
     const where: Record<string, unknown> = {
       active: true,
-      // Strictly separate product data per outlet: only show products active in the current outlet
       outletProducts: {
         some: {
           outletId: currentOutletId,
@@ -43,22 +51,19 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
       orderBy: { name: 'asc' },
     })
 
-    // Map outlet stock & price strictly for currentOutletId
     const mapped = products.map((p) => {
       const op = p.outletProducts[0]
       return {
         ...p,
         stock: op ? op.stock : 0,
         minStock: op ? op.minStock : 5,
-        price: op && op.price !== null ? op.price : p.price,
+        price: op?.price ?? p.price,
         recipeItems: p.recipeItems.map((r) => {
           const ingOp = r.ingredient.outletProducts[0]
           return {
             ...r,
             ingredient: {
-              id: r.ingredient.id,
-              name: r.ingredient.name,
-              unit: r.ingredient.unit,
+              ...r.ingredient,
               stock: ingOp ? ingOp.stock : 0,
             },
           }
@@ -70,83 +75,104 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
   }
 
   if (req.method === 'POST') {
-    if (!['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
-      return res.status(403).json({ error: 'Forbidden' })
+    if (!can(user.permissions, user.role, 'inventory', 'edit')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to create products' })
     }
+
     const { name, sku, categoryId, type, price, costPrice, unit, stock, minStock, recipeItems, allOutlets } = req.body
-    const product = await prisma.product.create({
-      data: {
-        name,
-        sku: sku || null,
-        categoryId: categoryId ? Number(categoryId) : null,
-        type: type || 'finished',
-        price: Number(price) || 0,
-        costPrice: Number(costPrice) || 0,
-        unit: unit || 'piece',
-      },
-      include: { category: true },
-    })
+
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ error: 'Product name is required' })
+    }
+
+    if (price !== undefined && (isNaN(Number(price)) || Number(price) < 0)) {
+      return res.status(400).json({ error: 'Price must be a non-negative number' })
+    }
+    if (costPrice !== undefined && (isNaN(Number(costPrice)) || Number(costPrice) < 0)) {
+      return res.status(400).json({ error: 'Cost price must be a non-negative number' })
+    }
+    if (stock !== undefined && (isNaN(Number(stock)) || Number(stock) < 0)) {
+      return res.status(400).json({ error: 'Stock must be a non-negative number' })
+    }
+    if (minStock !== undefined && (isNaN(Number(minStock)) || Number(minStock) < 0)) {
+      return res.status(400).json({ error: 'Min stock must be a non-negative number' })
+    }
 
     const initialStock = Number(stock) || 0
-    const initialMinStock = Number(minStock) || 5
+    const initialMinStock = minStock !== undefined ? Number(minStock) : 5
+    const numPrice = Number(price) || 0
+    const numCost = Number(costPrice) || 0
 
-    // If allOutlets is true (e.g. global product), assign to all active outlets; otherwise, keep separate to current outlet
-    if (allOutlets) {
-      const activeOutlets = await prisma.outlet.findMany({ where: { active: true } })
-      for (const outlet of activeOutlets) {
-        await prisma.outletProduct.create({
+    try {
+      const product = await prisma.$transaction(async (tx) => {
+        const p = await tx.product.create({
           data: {
-            outletId: outlet.id,
-            productId: product.id,
-            stock: outlet.id === currentOutletId ? initialStock : 0,
-            minStock: initialMinStock,
-            active: true,
+            name: name.trim(),
+            sku: sku ? String(sku).trim() : null,
+            categoryId: categoryId ? Number(categoryId) : null,
+            type: type || 'finished',
+            price: numPrice,
+            costPrice: numCost,
+            unit: unit || 'piece',
           },
+          include: { category: true },
         })
-      }
-    } else {
-      // Scoped strictly to the current outlet
-      await prisma.outletProduct.create({
-        data: {
-          outletId: currentOutletId,
-          productId: product.id,
-          stock: initialStock,
-          minStock: initialMinStock,
-          active: true,
-        },
-      })
-    }
 
-    // Log stock for current outlet
-    if (initialStock > 0) {
-      await prisma.stockLog.create({
-        data: {
-          outletId: currentOutletId,
-          productId: product.id,
-          type: 'IN',
-          quantity: initialStock,
-          note: 'Initial stock',
-        },
-      })
-    }
+        if (allOutlets) {
+          const activeOutlets = await tx.outlet.findMany({ where: { active: true } })
+          for (const outlet of activeOutlets) {
+            await tx.outletProduct.create({
+              data: {
+                outletId: outlet.id,
+                productId: p.id,
+                stock: outlet.id === currentOutletId ? initialStock : 0,
+                minStock: initialMinStock,
+                active: true,
+              },
+            })
+          }
+        } else {
+          await tx.outletProduct.create({
+            data: {
+              outletId: currentOutletId,
+              productId: p.id,
+              stock: initialStock,
+              minStock: initialMinStock,
+              active: true,
+            },
+          })
+        }
 
-    // Save recipe items for finished products
-    if (type === 'finished' && Array.isArray(recipeItems) && recipeItems.length > 0) {
-      await prisma.recipeItem.createMany({
-        data: recipeItems.map((r: { ingredientId: number; quantity: number; unit: string }) => ({
-          productId: product.id,
-          ingredientId: Number(r.ingredientId),
-          quantity: Number(r.quantity),
-          unit: r.unit,
-        })),
-      })
-    }
+        if (initialStock > 0) {
+          await tx.stockLog.create({
+            data: {
+              outletId: currentOutletId,
+              productId: p.id,
+              type: 'IN',
+              quantity: initialStock,
+              note: 'Initial stock',
+            },
+          })
+        }
 
-    return res.status(201).json({
-      ...product,
-      stock: initialStock,
-      minStock: initialMinStock,
-    })
+        if (type === 'finished' && Array.isArray(recipeItems) && recipeItems.length > 0) {
+          await tx.recipeItem.createMany({
+            data: recipeItems.map((r: { ingredientId: number; quantity: number; unit: string }) => ({
+              productId: p.id,
+              ingredientId: Number(r.ingredientId),
+              quantity: Number(r.quantity),
+              unit: r.unit || 'piece',
+            })),
+          })
+        }
+
+        return p
+      })
+
+      return res.status(201).json(product)
+    } catch (err: unknown) {
+      return res.status(400).json({ error: err instanceof Error ? err.message : 'Product creation failed' })
+    }
   }
 
   return res.status(405).json({ error: 'Method not allowed' })

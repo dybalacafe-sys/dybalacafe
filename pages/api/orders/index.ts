@@ -1,103 +1,52 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
-import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
+import { ordersService } from '@/lib/services/orders.service'
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
-  const outletId = await getOutletIdFromRequest(req)
-  const outlet = await prisma.outlet.findUnique({ where: { id: outletId } })
-  const outletCode = outlet?.code || 'ORD'
+  const outletId = await getOutletIdFromRequest(req, user)
 
   if (req.method === 'GET') {
-    const { status, customerId, page = '1', limit = '50', search } = req.query
-    const pageNum = Number(page) || 1
-    const limitNum = Number(limit) || 50
-    const skip = (pageNum - 1) * limitNum
-
-    const where: Record<string, unknown> = { outletId }
-    if (status) where.status = status
-    if (customerId) where.customerId = Number(customerId)
-    if (search) {
-      where.OR = [
-        { customerName: { contains: search as string } },
-        { orderNumber: { contains: search as string } },
-      ]
+    if (!can(user.permissions, user.role, 'orders', 'view')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view orders' })
     }
 
-    const [orders, total] = await Promise.all([
-      prisma.order.findMany({
-        where,
-        include: {
-          items: { include: { product: true } },
-          customer: true,
-          user: { select: { id: true, name: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limitNum,
-      }),
-      prisma.order.count({ where }),
-    ])
+    const { status, customerId, page, limit, search } = req.query
+    const result = await ordersService.getOrders({
+      outletId,
+      status: status as string | undefined,
+      customerId: customerId ? Number(customerId) : undefined,
+      search: search as string | undefined,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    })
 
-    return res.status(200).json({ orders, total })
+    return res.status(200).json(result)
   }
 
   if (req.method === 'POST') {
+    if (!can(user.permissions, user.role, 'orders', 'edit')) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to create orders' })
+    }
+
     const { customerName, customerPhone, customerId, deliveryDate, note, items, advancePaid } = req.body
 
-    if (!customerName || !items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ error: 'Customer name and items are required' })
-    }
-
-    let total = 0
-    const orderItems = items.map((item: { name: string; productId?: number; quantity: number; price: number }) => {
-      const subtotal = item.price * item.quantity
-      total += subtotal
-      return { name: item.name, productId: item.productId || null, quantity: item.quantity, price: item.price, subtotal }
-    })
-
-    const advance = Number(advancePaid) || 0
-    const balance = total - advance
-    let paymentStatus: 'UNPAID' | 'PARTIAL' | 'PAID' = 'UNPAID'
-    if (advance >= total) paymentStatus = 'PAID'
-    else if (advance > 0) paymentStatus = 'PARTIAL'
-
-    // Resolve customer: use provided customerId, or look up / create by phone
-    let resolvedCustomerId: number | null = customerId ? Number(customerId) : null
-    if (!resolvedCustomerId && customerPhone) {
-      const existing = await prisma.customer.findFirst({ where: { phone: customerPhone } })
-      if (existing) {
-        resolvedCustomerId = existing.id
-      } else {
-        const created = await prisma.customer.create({
-          data: { name: customerName, phone: customerPhone, type: 'regular', points: 0 },
-        })
-        resolvedCustomerId = created.id
-      }
-    }
-
-    const count = await prisma.order.count({ where: { outletId } })
-    const orderNumber = `${outletCode}-${String(count + 1).padStart(4, '0')}`
-
-    const order = await prisma.order.create({
-      data: {
-        orderNumber,
+    try {
+      const order = await ordersService.createOrder({
         outletId,
-        customerName,
-        customerPhone: customerPhone || null,
-        customerId: resolvedCustomerId,
         userId: user.userId,
-        totalAmount: total,
-        advancePaid: advance,
-        balanceDue: balance,
-        paymentStatus,
-        deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
+        customerName,
+        customerPhone,
+        customerId: customerId ? Number(customerId) : undefined,
+        deliveryDate,
         note,
-        items: { create: orderItems },
-      },
-      include: { items: true, user: { select: { name: true } } },
-    })
-
-    return res.status(201).json(order)
+        items,
+        advancePaid,
+      })
+      return res.status(201).json(order)
+    } catch (err: unknown) {
+      return res.status(400).json({ error: err instanceof Error ? err.message : 'Order creation failed' })
+    }
   }
 
   return res.status(405).json({ error: 'Method not allowed' })

@@ -2,6 +2,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, hashPassword } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
 function assignableRoles(requesterRole: string): string[] {
     if (requesterRole === 'SUPER_ADMIN') return ['SUPER_ADMIN', 'ADMIN', 'STAFF']
@@ -10,12 +11,11 @@ function assignableRoles(requesterRole: string): string[] {
 }
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
-    if (!['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
-        return res.status(403).json({ error: 'Forbidden' })
-    }
-
     // ── GET: list users with assigned outlets ─────────────────────────────────────
     if (req.method === 'GET') {
+        if (!can(user.permissions, user.role, 'users', 'view') && !['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
+            return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view users' })
+        }
         const where = user.role === 'ADMIN' ? { role: { not: 'SUPER_ADMIN' as const } } : {}
         const users = await prisma.user.findMany({
             where,
@@ -43,6 +43,9 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
 
     // ── POST: create user with outlet assignments ─────────────────────────────────
     if (req.method === 'POST') {
+        if (!can(user.permissions, user.role, 'users', 'edit') && !['SUPER_ADMIN', 'ADMIN'].includes(user.role)) {
+            return res.status(403).json({ error: 'Forbidden: Insufficient permissions to create users' })
+        }
         const { name, email, password, role, permissions, outletIds } = req.body
 
         if (!name || !email || !password) {

@@ -2,11 +2,27 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
-async function handler(req: NextApiRequest, res: NextApiResponse, _user: JWTPayload) {
+async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
-    const outletId = await getOutletIdFromRequest(req).catch(() => null)
+    if (!can(user.permissions, user.role, 'reports', 'view')) {
+        return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view reports' })
+    }
+
+    const headerVal = req.headers['x-outlet-id'] || req.query.outletId || (req.body && req.body.outletId)
+    let outletId: number | null = null
+
+    if (user.role === 'SUPER_ADMIN' && headerVal === 'all') {
+        outletId = null
+    } else {
+        try {
+            outletId = await getOutletIdFromRequest(req, user)
+        } catch (err: unknown) {
+            return res.status(403).json({ error: err instanceof Error ? err.message : 'Forbidden: Outlet access denied' })
+        }
+    }
     const { type, startDate, endDate } = req.query
 
     const start = startDate

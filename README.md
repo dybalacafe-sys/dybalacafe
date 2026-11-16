@@ -50,11 +50,25 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000)
 
-### 6. Initialize the System
-On the login page, click **"Initialize System"** to seed the database with:
-- Admin user: `admin@dybala.com` / `admin123`
-- Default categories (Beverages, Food, Bakery, Cakes, Raw Materials)
-- Sample products (Momo, Coffee, Tea, Cakes, etc.)
+### 6. Initialize & Seed the System
+Seed the database with modular domain seeders or run the full pipeline:
+```bash
+npm run seed              # Complete pipeline (Outlets -> Users -> Inventory -> Demo Data)
+npm run seed:users        # User accounts & credentials only
+npm run seed:outlets      # Outlets & terminals only
+npm run seed:inventory    # Catalog, recipes & baseline stock only
+npm run seed:demo         # Tables, mock sales, sessions & orders only
+```
+
+### 7. Automated Test Suites
+Run the verified testing suites:
+```bash
+npm test                  # In-memory security, RBAC & financial suite (22 tests, ~0.8s, 0 DB writes)
+npm run test:integration  # Concurrency, rollback & transaction suite (disposable test DB)
+npm run test:api          # Read-only live smoke suite against running Docker container (49 checks)
+```
+
+See [docs/ACCOUNTS.md](docs/ACCOUNTS.md) for provisioned account credentials and [docs/OPERATIONS.md](docs/OPERATIONS.md) for the backend operations runbook and testing architecture.
 
 ---
 

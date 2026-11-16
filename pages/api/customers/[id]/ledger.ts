@@ -5,6 +5,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { can } from '@/lib/permissions'
 
 export type LedgerEntryType =
     | 'POS_SALE'
@@ -26,10 +27,15 @@ export interface LedgerEntry {
     meta?: Record<string, unknown>
 }
 
-async function handler(req: NextApiRequest, res: NextApiResponse, _user: JWTPayload) {
+async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' })
 
+    if (!can(user.permissions, user.role, 'customers', 'view')) {
+        return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view customer ledger' })
+    }
+
     const customerId = Number(req.query.id)
+    if (!customerId || isNaN(customerId)) return res.status(400).json({ error: 'Invalid customer ID' })
 
     const customer = await prisma.customer.findUnique({
         where: { id: customerId },
