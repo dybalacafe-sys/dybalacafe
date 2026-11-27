@@ -6,6 +6,8 @@ import { printReceiptHtml, formatBillNumber } from '@/lib/printReceipt'
 import { CardGridSkeleton, TableSkeleton } from '@/components/Skeleton'
 import { createSaleSchema } from '@/lib/schemas/sales.schema'
 import { usePosStore } from '@/lib/stores/posStore'
+import { isCafeOutlet } from '@/lib/outlet'
+import Custom404 from '@/pages/404'
 import toast from 'react-hot-toast'
 import {
   FiSearch, FiTrash2, FiPlus, FiMinus, FiCheck,
@@ -91,7 +93,7 @@ async function printSaleReceipt(sale: Sale, token: string | null, onPrinted?: ()
 
 export default function POSPage() {
   const { token, selectedOutlet } = useAuth()
-  const isCafe = selectedOutlet?.code === 'CAF' || selectedOutlet?.type?.code === 'CAFE' || selectedOutlet?.name?.toLowerCase().includes('cafe')
+  const isCafe = isCafeOutlet(selectedOutlet)
 
   const [terminalId, setTerminalId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'pos' | 'history'>('pos')
@@ -273,6 +275,10 @@ export default function POSPage() {
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase())
   )
+
+  if (isCafe) {
+    return <Custom404 />
+  }
 
   return (
     <Layout>

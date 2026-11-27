@@ -3,10 +3,19 @@ import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { can } from '@/lib/permissions'
 import { salesService } from '@/lib/services/sales.service'
 import { createSaleSchema, getSalesQuerySchema } from '@/lib/schemas/sales.schema'
+import { prisma } from '@/lib/prisma'
+import { isCafeOutlet } from '@/lib/outlet'
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
   try {
     const outletId = await getOutletIdFromRequest(req, user)
+    const outlet = await prisma.outlet.findUnique({
+      where: { id: outletId },
+      select: { code: true, name: true, type: { select: { code: true } } },
+    })
+    if (isCafeOutlet(outlet)) {
+      return res.status(404).json({ error: 'Not found' })
+    }
 
     if (req.method === 'GET') {
       if (!can(user.permissions, user.role, 'pos', 'view')) {

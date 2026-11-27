@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/lib/AuthContext'
 import DateTimePicker from '@/components/DateTimePicker'
+import { isCafeOutlet } from '@/lib/outlet'
 import {
   FiHome, FiShoppingCart, FiUsers,
   FiBarChart2, FiLogOut, FiMenu, FiX, FiDollarSign,
@@ -81,8 +82,11 @@ function LayoutInner({ children }: { children: ReactNode }) {
     const target = outlets.find(o => o.id === outletId)
     if (target) {
       setSelectedOutlet(target)
-      // Refresh current page to apply new outlet context
-      router.replace(router.asPath)
+      if (router.pathname === '/pos' && isCafeOutlet(target)) {
+        router.push('/dashboard')
+      } else {
+        router.replace(router.asPath)
+      }
     }
   }
 

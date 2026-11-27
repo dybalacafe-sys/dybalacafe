@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AppProps } from 'next/app'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
@@ -38,6 +38,12 @@ export default function App({ Component, pageProps }: AppProps) {
       })
   )
 
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {})
+    }
+  }, [])
+
   const showLayout = !NO_LAYOUT_ROUTES.includes(router.pathname)
   const pageTitle = PAGE_TITLES[router.pathname]
   const fullTitle = pageTitle ? `${pageTitle} | Dybala BMS` : 'Dybala BMS'
@@ -46,10 +52,9 @@ export default function App({ Component, pageProps }: AppProps) {
     <QueryClientProvider client={queryClient}>
       <Head>
         <title>{fullTitle}</title>
-        <link
-          rel="icon"
-          href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%232563eb'/><text x='50%25' y='55%25' dominant-baseline='middle' text-anchor='middle' font-size='55' font-family='sans-serif' font-weight='bold' fill='white'>D</text></svg>"
-        />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#2563eb" />
+        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
       </Head>
       <AuthProvider>
         {showLayout ? (
