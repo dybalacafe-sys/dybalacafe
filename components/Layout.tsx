@@ -32,11 +32,13 @@ export default function Layout({ children }: { children: ReactNode }) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
     if (localStorage.getItem('bms_sidebar_collapsed') === 'true') {
       setSidebarCollapsed(true)
     }
+    setMounted(true)
   }, [])
 
   const toggleSidebarCollapsed = () => {
@@ -73,7 +75,7 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-64'} bg-gray-900 text-white transform transition-all duration-200 ease-in-out
+        className={`fixed inset-y-0 left-0 z-50 w-64 ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-64'} bg-gray-900 text-white transform ${mounted ? 'transition-all duration-200 ease-in-out' : ''}
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:z-auto flex flex-col justify-between`}
       >
         <div>
