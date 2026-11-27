@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
 import { printReceiptHtml, formatBillNumber } from '@/lib/printReceipt'
+import { CardGridSkeleton, TableSkeleton } from '@/components/Skeleton'
 import { createSaleSchema } from '@/lib/schemas/sales.schema'
 import { usePosStore } from '@/lib/stores/posStore'
 import toast from 'react-hot-toast'
@@ -128,7 +129,7 @@ export default function POSPage() {
   const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc')
   const HISTORY_LIMIT = 15
 
-  const { data: products = [] } = useQuery<Product[]>({
+  const { data: products = [], isLoading: productsLoading } = useQuery<Product[]>({
     queryKey: ['products', selectedOutlet?.id],
     queryFn: () => apiFetch('/api/products?type=finished', {}, token!) as Promise<Product[]>,
     enabled: !!token,
@@ -344,7 +345,9 @@ export default function POSPage() {
                 </button>
               ))}
             </div>
-            {filtered.length === 0 && (
+            {productsLoading ? (
+              <CardGridSkeleton />
+            ) : filtered.length === 0 && (
               <p className="text-center py-8 text-gray-400">No products available in this outlet</p>
             )}
           </div>
@@ -536,7 +539,7 @@ export default function POSPage() {
           </div>
 
           {historyLoading ? (
-            <div className="text-center py-12 text-gray-400">Loading sales...</div>
+            <TableSkeleton rows={6} />
           ) : sales.length === 0 ? (
             <div className="text-center py-12 text-gray-400">No sales recorded yet for this outlet</div>
           ) : (

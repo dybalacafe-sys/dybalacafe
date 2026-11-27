@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { TableSkeleton } from '@/components/Skeleton'
 import toast from 'react-hot-toast'
 import {
   FiPlus, FiTrash2, FiDollarSign, FiCreditCard,
@@ -95,7 +96,7 @@ export default function ExpensesPage() {
   const queryClient = useQueryClient()
 
   // Fetch daily expenses
-  const { data: expensesData } = useQuery<{ expenses: Expense[]; total: number }>({
+  const { data: expensesData, isLoading: expensesLoading } = useQuery<{ expenses: Expense[]; total: number }>({
     queryKey: ['expenses', selectedOutlet?.id, startDate, endDate],
     queryFn: () =>
       apiFetch(
@@ -426,7 +427,9 @@ export default function ExpensesPage() {
                           </td>
                         </tr>
                       ))}
-                      {expenses.length === 0 && (
+                      {expensesLoading ? (
+                        <tr><td colSpan={5} className="p-4"><TableSkeleton rows={5} /></td></tr>
+                      ) : expenses.length === 0 && (
                         <tr>
                           <td colSpan={5} className="text-center py-8 text-gray-400">
                             No expenses in this period

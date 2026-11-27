@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
 import { printReceiptHtml, formatBillNumber } from '@/lib/printReceipt'
+import { TableSkeleton, CardGridSkeleton } from '@/components/Skeleton'
 import toast from 'react-hot-toast'
 import {
     FiPlus, FiMinus, FiTrash2, FiPrinter, FiSearch,
@@ -501,7 +502,7 @@ export default function TableOrdersPage() {
                     </div>
 
                     {tablesLoading ? (
-                        <div className="text-center py-20 text-gray-400">Loading tables...</div>
+                        <CardGridSkeleton count={6} />
                     ) : tables.length === 0 ? (
                         <div className="text-center py-20 text-gray-400">
                             <FiPackage size={40} className="mx-auto mb-3 opacity-40" />
@@ -652,7 +653,7 @@ export default function TableOrdersPage() {
                     </div>
 
                     {sessionLoading ? (
-                        <div className="text-center py-20 text-gray-400">Loading session...</div>
+                        <TableSkeleton rows={5} />
                     ) : (
                         <div className="flex flex-col lg:flex-row gap-6">
                             {/* Order rounds */}
@@ -810,7 +811,7 @@ export default function TableOrdersPage() {
                     </div>
 
                     {historyLoading ? (
-                        <div className="text-center py-20 text-gray-400">Loading...</div>
+                        <TableSkeleton rows={6} />
                     ) : history.length === 0 ? (
                         <div className="text-center py-20 text-gray-400">No closed sessions yet</div>
                     ) : (

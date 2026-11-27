@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { TableSkeleton } from '@/components/Skeleton'
 import toast from 'react-hot-toast'
 import {
     FiPlus, FiSearch, FiStar, FiX, FiShoppingCart,
@@ -565,7 +566,7 @@ export default function CustomersPage() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
                     <div className="bg-white rounded-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
                         {loadingDetail ? (
-                            <div className="flex items-center justify-center p-16 text-gray-400">Loading...</div>
+                            <div className="p-6"><TableSkeleton rows={5} /></div>
                         ) : detail && (
                             <>
                                 {/* Header */}
@@ -1043,7 +1044,7 @@ export default function CustomersPage() {
                                     {detailTab === 'ledger' && (
                                         <>
                                             {ledgerLoading ? (
-                                                <div className="text-center py-10 text-gray-400">Loading ledger...</div>
+                                                <TableSkeleton rows={5} />
                                             ) : !ledger ? (
                                                 <div className="text-center py-10 text-gray-400">No data</div>
                                             ) : (

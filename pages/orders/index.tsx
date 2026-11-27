@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { TableSkeleton } from '@/components/Skeleton'
 import Link from 'next/link'
 import { FiPlus, FiSearch, FiEdit2, FiEye } from 'react-icons/fi'
 import toast from 'react-hot-toast'
@@ -20,6 +21,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function OrdersPage() {
   const { token, can, selectedOutlet } = useAuth()
   const [orders, setOrders] = useState<Order[]>([])
+  const [loading, setLoading] = useState(true)
   const [total, setTotal] = useState(0)
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
@@ -27,12 +29,23 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [showUpdateModal, setShowUpdateModal] = useState(false)
   const [updateData, setUpdateData] = useState({ status: '', advancePaid: '' })
+  const [showNewModal, setShowNewModal] = useState(false)
+  const [creatingOrder, setCreatingOrder] = useState(false)
+  const [newOrderForm, setNewOrderForm] = useState({
+    customerName: '',
+    customerPhone: '',
+    deliveryDate: '',
+    advancePaid: '0',
+    note: '',
+  })
+  const [newOrderItems, setNewOrderItems] = useState([{ name: '', quantity: '1', price: '0' }])
 
   const fetchOrders = useCallback(async () => {
     if (!token) return
     const params = new URLSearchParams({ page: page.toString(), limit: '15' })
     if (statusFilter) params.set('status', statusFilter)
     if (search) params.set('search', search)
+    setLoading(true)
     try {
       const data = await apiFetch('/api/orders?' + params, {}, token)
       const list = Array.isArray(data) ? data : ((data && typeof data === 'object' && Array.isArray((data as any).orders)) ? (data as any).orders : [])
@@ -41,6 +54,8 @@ export default function OrdersPage() {
     } catch (e) {
       console.error(e)
       setOrders([])
+    } finally {
+      setLoading(false)
     }
   }, [token, statusFilter, search, page, selectedOutlet?.id])
 
@@ -71,9 +86,13 @@ export default function OrdersPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
           {can('orders', 'edit') && (
-            <Link href="/orders/new" className="btn-primary flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowNewModal(true)}
+              className="btn-primary flex items-center gap-2"
+            >
               <FiPlus /> New Order
-            </Link>
+            </button>
           )}
         </div>
 
@@ -136,7 +155,11 @@ export default function OrdersPage() {
                 ))}
               </tbody>
             </table>
-            {orders.length === 0 && <p className="text-center py-8 text-gray-400">No orders found</p>}
+            {loading ? (
+              <div className="p-4"><TableSkeleton rows={5} /></div>
+            ) : orders.length === 0 && (
+              <p className="text-center py-8 text-gray-400">No orders found</p>
+            )}
           </div>
 
           {total > 15 && (
@@ -152,7 +175,7 @@ export default function OrdersPage() {
       </div>
 
       {showUpdateModal && selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4">
             <h2 className="text-lg font-bold">Update Order: {selectedOrder.orderNumber}</h2>
             <p className="text-sm text-gray-600">Customer: {selectedOrder.customerName}</p>
@@ -174,6 +197,173 @@ export default function OrdersPage() {
             <div className="flex gap-3">
               <button onClick={handleUpdate} className="btn-primary flex-1">Update</button>
               <button onClick={() => setShowUpdateModal(false)} className="btn-secondary flex-1">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showNewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold text-gray-900">New Order</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Customer Name *</label>
+                <input
+                  type="text"
+                  value={newOrderForm.customerName}
+                  onChange={e => setNewOrderForm({ ...newOrderForm, customerName: e.target.value })}
+                  className="input"
+                  placeholder="Customer name"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
+                <input
+                  type="text"
+                  value={newOrderForm.customerPhone}
+                  onChange={e => setNewOrderForm({ ...newOrderForm, customerPhone: e.target.value })}
+                  className="input"
+                  placeholder="Phone number"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Delivery Date</label>
+                <input
+                  type="date"
+                  value={newOrderForm.deliveryDate}
+                  onChange={e => setNewOrderForm({ ...newOrderForm, deliveryDate: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Advance Paid (NPR)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={newOrderForm.advancePaid}
+                  onChange={e => setNewOrderForm({ ...newOrderForm, advancePaid: e.target.value })}
+                  className="input"
+                />
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-medium text-gray-700">Order Items *</label>
+                <button
+                  type="button"
+                  onClick={() => setNewOrderItems([...newOrderItems, { name: '', quantity: '1', price: '0' }])}
+                  className="text-xs text-blue-600 hover:underline font-medium"
+                >
+                  + Add Item
+                </button>
+              </div>
+              <div className="space-y-2">
+                {newOrderItems.map((item, idx) => (
+                  <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={e => {
+                        const next = [...newOrderItems]
+                        next[idx].name = e.target.value
+                        setNewOrderItems(next)
+                      }}
+                      placeholder="Item name"
+                      className="input col-span-6 text-xs"
+                    />
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={e => {
+                        const next = [...newOrderItems]
+                        next[idx].quantity = e.target.value
+                        setNewOrderItems(next)
+                      }}
+                      placeholder="Qty"
+                      className="input col-span-2 text-xs"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      value={item.price}
+                      onChange={e => {
+                        const next = [...newOrderItems]
+                        next[idx].price = e.target.value
+                        setNewOrderItems(next)
+                      }}
+                      placeholder="Price"
+                      className="input col-span-3 text-xs"
+                    />
+                    {newOrderItems.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewOrderItems(newOrderItems.filter((_, i) => i !== idx))}
+                        className="text-red-500 hover:text-red-700 text-xs col-span-1"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Note</label>
+              <input
+                type="text"
+                value={newOrderForm.note}
+                onChange={e => setNewOrderForm({ ...newOrderForm, note: e.target.value })}
+                className="input"
+                placeholder="Optional note"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={() => setShowNewModal(false)} className="btn-secondary">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={creatingOrder}
+                onClick={async () => {
+                  const validItems = newOrderItems
+                    .filter(i => i.name.trim())
+                    .map(i => ({ name: i.name.trim(), quantity: Number(i.quantity) || 1, price: Number(i.price) || 0 }))
+                  if (!newOrderForm.customerName.trim() || validItems.length === 0) {
+                    toast.error('Customer name and at least one item are required')
+                    return
+                  }
+                  setCreatingOrder(true)
+                  try {
+                    await apiFetch('/api/orders', {
+                      method: 'POST',
+                      body: JSON.stringify({
+                        customerName: newOrderForm.customerName.trim(),
+                        customerPhone: newOrderForm.customerPhone.trim() || undefined,
+                        deliveryDate: newOrderForm.deliveryDate || undefined,
+                        advancePaid: Number(newOrderForm.advancePaid) || 0,
+                        note: newOrderForm.note.trim() || undefined,
+                        items: validItems,
+                      }),
+                    }, token)
+                    toast.success('Order created!')
+                    setShowNewModal(false)
+                    setNewOrderForm({ customerName: '', customerPhone: '', deliveryDate: '', advancePaid: '0', note: '' })
+                    setNewOrderItems([{ name: '', quantity: '1', price: '0' }])
+                    fetchOrders()
+                  } catch (err: unknown) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to create order')
+                  } finally {
+                    setCreatingOrder(false)
+                  }
+                }}
+                className="btn-primary"
+              >
+                {creatingOrder ? 'Creating...' : 'Create Order'}
+              </button>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { TableSkeleton } from '@/components/Skeleton'
 import toast from 'react-hot-toast'
 import { FiPlus, FiEdit2, FiSearch, FiAlertTriangle, FiRefreshCw, FiTrash2, FiLink, FiChevronDown, FiChevronUp } from 'react-icons/fi'
 
@@ -35,7 +36,7 @@ export default function InventoryPage() {
   const [recipe, setRecipe] = useState<RecipeRow[]>([])
   const [stockAdjust, setStockAdjust] = useState({ type: 'IN', quantity: '', note: '' })
 
-  const { data: inventoryData } = useQuery<{ products: Product[]; categories: Category[] }>({
+  const { data: inventoryData, isLoading: inventoryLoading } = useQuery<{ products: Product[]; categories: Category[] }>({
     queryKey: ['inventory', selectedOutlet?.id],
     queryFn: async () => {
       const [prods, cats] = await Promise.all([
@@ -246,7 +247,9 @@ export default function InventoryPage() {
                 ))}
               </tbody>
             </table>
-            {filtered.length === 0 && (
+            {inventoryLoading ? (
+              <div className="p-4"><TableSkeleton rows={6} /></div>
+            ) : filtered.length === 0 && (
               <p className="text-center py-8 text-gray-400">No products found in this outlet</p>
             )}
           </div>

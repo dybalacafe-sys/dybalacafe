@@ -2,10 +2,11 @@ import { ReactNode, createContext, useContext, useEffect, useState } from 'react
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/lib/AuthContext'
+import DateTimePicker from '@/components/DateTimePicker'
 import {
   FiHome, FiShoppingCart, FiUsers,
   FiBarChart2, FiLogOut, FiMenu, FiX, FiDollarSign,
-  FiShoppingBag, FiUser, FiGrid, FiMapPin, FiChevronDown, FiChevronLeft, FiChevronRight
+  FiShoppingBag, FiUser, FiGrid, FiMapPin, FiChevronDown, FiChevronLeft, FiChevronRight, FiPackage
 } from 'react-icons/fi'
 import { ModuleKey } from '@/lib/permissions'
 
@@ -20,6 +21,7 @@ const navItems: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: <FiHome />, module: 'dashboard' },
   { href: '/pos', label: 'POS / Sales', icon: <FiShoppingCart />, module: 'pos' },
   { href: '/table-orders', label: 'Tables', icon: <FiGrid />, module: 'tables' },
+  { href: '/orders', label: 'Orders', icon: <FiPackage />, module: 'orders' },
   { href: '/inventory', label: 'Inventory', icon: <FiShoppingBag />, module: 'inventory' },
   { href: '/expenses', label: 'Expenses & Vendors', icon: <FiDollarSign />, module: 'expenses' },
   { href: '/customers', label: 'Customers / Credit', icon: <FiUser />, module: 'customers' },
@@ -169,11 +171,13 @@ function LayoutInner({ children }: { children: ReactNode }) {
             <FiMenu size={22} />
           </button>
 
-          <div className="text-sm text-gray-500 hidden sm:block">
-            {new Date().toLocaleDateString('en-NP', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+          <div className="text-sm text-gray-700 font-medium hidden sm:block">
+            Hi, {user?.name}
           </div>
 
           <div className="flex items-center gap-3">
+            <DateTimePicker />
+
             {/* Quick outlet switch on top header */}
             {outlets.length > 0 && (
               <div className="flex items-center gap-1.5 bg-blue-50 text-blue-800 border border-blue-200 rounded-full px-3 py-1 text-xs font-medium">
@@ -194,10 +198,6 @@ function LayoutInner({ children }: { children: ReactNode }) {
                 <FiChevronDown size={12} className="text-blue-500" />
               </div>
             )}
-
-            <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
-              <span className="text-sm text-gray-700 font-medium">Hi, {user?.name}</span>
-            </div>
           </div>
         </header>
 
