@@ -11,12 +11,14 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
       return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view sales' })
     }
 
-    const { startDate, endDate, customerId, page, limit } = req.query
+    const { startDate, endDate, customerId, search, sortOrder, page, limit } = req.query
     const result = await salesService.getSales({
       outletId,
       startDate: startDate as string | undefined,
       endDate: endDate as string | undefined,
       customerId: customerId ? Number(customerId) : undefined,
+      search: search as string | undefined,
+      sortOrder: sortOrder === 'asc' ? 'asc' : 'desc',
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     })

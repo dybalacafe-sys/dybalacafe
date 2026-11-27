@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { printReceiptHtml } from '@/lib/printReceipt'
 import toast from 'react-hot-toast'
 import {
     FiPlus, FiMinus, FiTrash2, FiPrinter, FiSearch,
@@ -103,47 +104,9 @@ const fmtTime = (d: string) =>
     new Date(d).toLocaleString('en-NP', { hour: '2-digit', minute: '2-digit', hour12: true })
 
 // ─── Print Receipt ────────────────────────────────────────────────────────────
-// Uses a hidden iframe so print never affects the main page layout.
-// All styles are inline — zero dependency on Tailwind at print time.
-
+// Uses a hidden iframe via printReceiptHtml so print never affects the main page layout.
 function usePrintReceipt() {
-    const print = (html: string) => {
-        const iframe = document.createElement('iframe')
-        iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:80mm;height:auto;border:none;'
-        document.body.appendChild(iframe)
-        const doc = iframe.contentWindow?.document
-        if (!doc) return
-        doc.open()
-        doc.write(`<!DOCTYPE html><html><head>
-      <meta charset="utf-8"/>
-      <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family: monospace; font-size: 12px; width: 80mm; padding: 8px; }
-        .center { text-align: center; }
-        .bold { font-weight: bold; }
-        .large { font-size: 16px; }
-        .xlarge { font-size: 20px; }
-        .small { font-size: 10px; }
-        .divider { border-top: 1px dashed #000; margin: 6px 0; }
-        .divider-solid { border-top: 2px solid #000; margin: 6px 0; }
-        .row { display: flex; justify-content: space-between; margin: 3px 0; }
-        .row-bold { display: flex; justify-content: space-between; font-weight: bold; margin: 3px 0; }
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; border-bottom: 1px solid #000; padding-bottom: 3px; }
-        th.right { text-align: right; }
-        td { padding: 4px 0; border-bottom: 1px dashed #ccc; }
-        td.right { text-align: right; font-weight: bold; font-size: 14px; }
-        .note-box { border: 1px dashed #000; padding: 4px; margin: 6px 0; text-align: center; font-style: italic; }
-        .muted { color: #555; }
-        @page { margin: 0; size: 80mm; }
-      </style>
-    </head><body>${html}</body></html>`)
-        doc.close()
-        iframe.contentWindow?.focus()
-        iframe.contentWindow?.print()
-        setTimeout(() => document.body.removeChild(iframe), 2000)
-    }
-    return print
+    return printReceiptHtml
 }
 
 function buildKitchenHtml(session: SessionDetail, latestRound: TableOrderRound | null): string {

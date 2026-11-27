@@ -19,15 +19,18 @@ export interface GetSalesParams {
   startDate?: string
   endDate?: string
   customerId?: number
+  search?: string
+  sortOrder?: 'asc' | 'desc'
   page?: number
   limit?: number
 }
 
 export const salesService = {
-  async getSales({ outletId, startDate, endDate, customerId, page = 1, limit = 50 }: GetSalesParams) {
+  async getSales({ outletId, startDate, endDate, customerId, search, sortOrder = 'desc', page = 1, limit = 50 }: GetSalesParams) {
     const pageNum = Math.max(1, page)
     const limitNum = Math.min(100, Math.max(1, limit))
     const skip = (pageNum - 1) * limitNum
+    const order = sortOrder === 'asc' ? 'asc' : 'desc'
 
     const where: Record<string, unknown> = { outletId }
     if (startDate && endDate) {
@@ -38,6 +41,22 @@ export const salesService = {
     }
     if (customerId) where.customerId = customerId
 
+    const trimmedSearch = search?.trim()
+    if (trimmedSearch) {
+      const normalizedIdStr = trimmedSearch.startsWith('#') ? trimmedSearch.slice(1).trim() : trimmedSearch
+      const numericId = Number(normalizedIdStr)
+      const orConditions: Record<string, unknown>[] = [
+        { paymentMethod: { contains: trimmedSearch } },
+        { customer: { name: { contains: trimmedSearch } } },
+        { customer: { phone: { contains: trimmedSearch } } },
+        { items: { some: { product: { name: { contains: trimmedSearch } } } } },
+      ]
+      if (normalizedIdStr && !isNaN(numericId) && Number.isInteger(numericId) && numericId > 0) {
+        orConditions.push({ id: numericId })
+      }
+      where.OR = orConditions
+    }
+
     const [sales, total] = await Promise.all([
       prisma.sale.findMany({
         where,
@@ -46,7 +65,7 @@ export const salesService = {
           customer: true,
           user: { select: { id: true, name: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: order },
         skip,
         take: limitNum,
       }),
@@ -82,10 +101,10 @@ export const salesService = {
       consolidatedMap.set(pid, (consolidatedMap.get(pid) || 0) + qty)
     }
 
-    return await prisma.$transaction(async (tx) => {
-      // 2. Batch fetch all products in cart (Eliminates N+1 query loop)
-      const productIds = Array.from(consolidatedMap.keys())
-      const products = await tx.product.findMany({
+    // 2. Batch fetch products and customer lookup in parallel BEFORE starting the transaction
+    const productIds = Array.from(consolidatedMap.keys())
+    const [products, existingCustomer] = await Promise.all([
+      prisma.product.findMany({
         where: { id: { in: productIds } },
         include: {
           outletProducts: { where: { outletId } },
@@ -97,75 +116,73 @@ export const salesService = {
             },
           },
         },
-      })
-      const productMap = new Map(products.map((p) => [p.id, p]))
+      }),
+      customerPhone ? prisma.customer.findFirst({ where: { phone: customerPhone } }) : Promise.resolve(null),
+    ])
+    const productMap = new Map(products.map((p) => [p.id, p]))
 
-      let subtotal = 0
-      const saleItems: Array<{
-        productId: number
-        quantity: number
-        price: number
-        subtotal: number
-      }> = []
-      const recipeMap = new Map<number, Array<{ ingredientId: number; quantity: number; unit: string }>>()
+    let subtotal = 0
+    const saleItems: Array<{
+      productId: number
+      quantity: number
+      price: number
+      subtotal: number
+    }> = []
+    const recipeMap = new Map<number, Array<{ ingredientId: number; quantity: number; unit: string }>>()
 
-      for (const [productId, quantity] of Array.from(consolidatedMap.entries())) {
-        const product = productMap.get(productId)
-        if (!product) throw new Error(`Product #${productId} not found`)
+    for (const [productId, quantity] of Array.from(consolidatedMap.entries())) {
+      const product = productMap.get(productId)
+      if (!product) throw new Error(`Product #${productId} not found`)
 
-        const op = product.outletProducts[0]
-        const currentStock = op?.stock ?? 0
-        if (currentStock < quantity) {
-          throw new Error(`Insufficient stock for ${product.name} (available: ${currentStock})`)
-        }
-
-        for (const ri of product.recipeItems) {
-          const needed = ri.quantity * quantity
-          const ingStock = ri.ingredient.outletProducts[0]?.stock ?? 0
-          if (ingStock < needed) {
-            throw new Error(`Not enough ${ri.ingredient.name} (need ${needed} ${ri.unit}, have ${ingStock})`)
-          }
-        }
-
-        if (product.recipeItems.length > 0) {
-          recipeMap.set(
-            productId,
-            product.recipeItems.map((ri) => ({
-              ingredientId: ri.ingredientId,
-              quantity: ri.quantity,
-              unit: ri.unit,
-            }))
-          )
-        }
-
-        // Verified server pricing from database
-        const price = op?.price ?? product.price
-        const itemSubtotal = price * quantity
-        subtotal += itemSubtotal
-        saleItems.push({ productId, quantity, price, subtotal: itemSubtotal })
+      const op = product.outletProducts[0]
+      const currentStock = op?.stock ?? 0
+      if (currentStock < quantity) {
+        throw new Error(`Insufficient stock for ${product.name} (available: ${currentStock})`)
       }
 
-      const safeDiscount = Math.max(0, Math.min(Number(discount) || 0, subtotal))
-      const total = subtotal - safeDiscount
-      const pointsEarned = Math.floor(total / POINTS_PER_AMOUNT)
-
-      // Resolve customer
-      let resolvedCustomerId: number | null = null
-      if (customerPhone) {
-        const existing = await tx.customer.findFirst({ where: { phone: customerPhone } })
-        if (existing) {
-          resolvedCustomerId = existing.id
-        } else {
-          const newCustomer = await tx.customer.create({
-            data: {
-              name: customerName || `Customer (${customerPhone})`,
-              phone: customerPhone,
-              type: 'regular',
-              points: 0,
-            },
-          })
-          resolvedCustomerId = newCustomer.id
+      for (const ri of product.recipeItems) {
+        const needed = ri.quantity * quantity
+        const ingStock = ri.ingredient.outletProducts[0]?.stock ?? 0
+        if (ingStock < needed) {
+          throw new Error(`Not enough ${ri.ingredient.name} (need ${needed} ${ri.unit}, have ${ingStock})`)
         }
+      }
+
+      if (product.recipeItems.length > 0) {
+        recipeMap.set(
+          productId,
+          product.recipeItems.map((ri) => ({
+            ingredientId: ri.ingredientId,
+            quantity: ri.quantity,
+            unit: ri.unit,
+          }))
+        )
+      }
+
+      // Verified server pricing from database
+      const price = op?.price ?? product.price
+      const itemSubtotal = price * quantity
+      subtotal += itemSubtotal
+      saleItems.push({ productId, quantity, price, subtotal: itemSubtotal })
+    }
+
+    const safeDiscount = Math.max(0, Math.min(Number(discount) || 0, subtotal))
+    const total = subtotal - safeDiscount
+    const pointsEarned = Math.floor(total / POINTS_PER_AMOUNT)
+
+    return await prisma.$transaction(async (tx) => {
+      // Resolve customer
+      let resolvedCustomerId: number | null = existingCustomer?.id ?? null
+      if (customerPhone && !resolvedCustomerId) {
+        const newCustomer = await tx.customer.create({
+          data: {
+            name: customerName || `Customer (${customerPhone})`,
+            phone: customerPhone,
+            type: 'regular',
+            points: 0,
+          },
+        })
+        resolvedCustomerId = newCustomer.id
       }
 
       // Record Sale
@@ -241,16 +258,15 @@ export const salesService = {
         })
       )
 
-      if (stockLogs.length > 0) {
-        await tx.stockLog.createMany({ data: stockLogs })
-      }
-
-      if (resolvedCustomerId && pointsEarned > 0) {
-        await tx.customer.update({
-          where: { id: resolvedCustomerId },
-          data: { points: { increment: pointsEarned } },
-        })
-      }
+      await Promise.all([
+        stockLogs.length > 0 ? tx.stockLog.createMany({ data: stockLogs }) : Promise.resolve(),
+        resolvedCustomerId && pointsEarned > 0
+          ? tx.customer.update({
+              where: { id: resolvedCustomerId },
+              data: { points: { increment: pointsEarned } },
+            })
+          : Promise.resolve(),
+      ])
 
       return s
     }, { timeout: 15000 })

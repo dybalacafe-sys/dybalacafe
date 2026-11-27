@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
+import { printReceiptHtml } from '@/lib/printReceipt'
 import toast from 'react-hot-toast'
 import {
   FiSearch, FiTrash2, FiPlus, FiMinus, FiCheck,
-  FiShoppingBag, FiClock, FiUser, FiPhone, FiCheckCircle, FiAlertCircle
+  FiShoppingBag, FiClock, FiUser, FiPhone, FiCheckCircle, FiAlertCircle, FiPrinter
 } from 'react-icons/fi'
 
 interface Product {
@@ -49,6 +50,29 @@ interface Sale {
   items: SaleItem[]
 }
 
+function printSaleReceipt(sale: Sale) {
+  const itemsHtml = sale.items
+    .map(i => `<tr><td>${i.product.name} × ${i.quantity}</td><td class="right">${(i.price * i.quantity).toLocaleString()}</td></tr>`)
+    .join('')
+  const html = `
+    <div class="center bold large">RECEIPT #${String(sale.id).padStart(6, '0')}</div>
+    <div class="center small muted">${new Date(sale.createdAt).toLocaleString('en-NP')}</div>
+    ${sale.customer ? `<div class="center small">${sale.customer.name} (${sale.customer.phone})</div>` : ''}
+    <div class="divider"></div>
+    <table>
+      <thead><tr><th>Item</th><th class="right">Amt</th></tr></thead>
+      <tbody>${itemsHtml}</tbody>
+    </table>
+    <div class="divider"></div>
+    ${sale.discount > 0 ? `<div class="row"><span>Discount</span><span>-NPR ${sale.discount.toLocaleString()}</span></div>` : ''}
+    <div class="row-bold large"><span>TOTAL</span><span>NPR ${sale.total.toLocaleString()}</span></div>
+    <div class="row small"><span>Payment</span><span style="text-transform:capitalize">${sale.paymentMethod}</span></div>
+    <div class="divider"></div>
+    <div class="center small muted">Thank you!</div>
+  `
+  printReceiptHtml(html)
+}
+
 export default function POSPage() {
   const { token, selectedOutlet } = useAuth()
   const isCafe = selectedOutlet?.code === 'CAF' || selectedOutlet?.type?.code === 'CAFE' || selectedOutlet?.name?.toLowerCase().includes('cafe')
@@ -85,6 +109,8 @@ export default function POSPage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyPage, setHistoryPage] = useState(1)
   const [historyTotal, setHistoryTotal] = useState(0)
+  const [historySearch, setHistorySearch] = useState('')
+  const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc')
   const HISTORY_LIMIT = 15
 
   const fetchProducts = useCallback(async () => {
@@ -93,11 +119,17 @@ export default function POSPage() {
     setProducts(data as Product[])
   }, [token])
 
-  const fetchSalesHistory = useCallback(async (page = 1) => {
+  const fetchSalesHistory = useCallback(async (page = 1, search = '', sortOrder = historySort) => {
     if (!token) return
     setHistoryLoading(true)
     try {
-      const data = await apiFetch('/api/sales?page=' + page + '&limit=' + HISTORY_LIMIT, {}, token)
+      const params = new URLSearchParams({
+        page: String(page),
+        limit: String(HISTORY_LIMIT),
+        sortOrder,
+      })
+      if (search.trim()) params.set('search', search.trim())
+      const data = await apiFetch(`/api/sales?${params.toString()}`, {}, token)
       const list = Array.isArray(data) ? data : ((data && typeof data === 'object' && Array.isArray((data as any).sales)) ? (data as any).sales : [])
       setSales(list)
       setHistoryTotal((data as any)?.total ?? list.length)
@@ -108,7 +140,7 @@ export default function POSPage() {
     } finally {
       setHistoryLoading(false)
     }
-  }, [token])
+  }, [token, historySort])
 
   useEffect(() => { fetchProducts() }, [fetchProducts, selectedOutlet?.id])
 
@@ -196,7 +228,9 @@ export default function POSPage() {
           terminalId: terminalId || undefined,
         }),
       }, token)
-      setLastReceipt(res as Sale)
+      const completedSale = res as Sale
+      setLastReceipt(completedSale)
+      printSaleReceipt(completedSale)
       setCart([])
       setDiscount(0)
       setCustomerPhone('')
@@ -441,14 +475,41 @@ export default function POSPage() {
       {/* ── SALES HISTORY TAB ── */}
       {activeTab === 'history' && (
         <div className="card space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <h2 className="text-lg font-bold text-gray-900">Recent Sales History ({selectedOutlet?.name || 'All Outlets'})</h2>
-            <button
-              onClick={() => fetchSalesHistory(1)}
-              className="btn-secondary text-xs"
-            >
-              Refresh
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <FiSearch className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={e => setHistorySearch(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') fetchSalesHistory(1, historySearch, historySort)
+                  }}
+                  placeholder="Receipt #, customer, item..."
+                  className="input pl-8 py-1.5 text-xs w-48"
+                />
+              </div>
+              <select
+                value={historySort}
+                onChange={e => {
+                  const nextSort = e.target.value as 'asc' | 'desc'
+                  setHistorySort(nextSort)
+                  fetchSalesHistory(1, historySearch, nextSort)
+                }}
+                className="input py-1.5 text-xs w-auto"
+              >
+                <option value="desc">Newest First (DESC)</option>
+                <option value="asc">Oldest First (ASC)</option>
+              </select>
+              <button
+                onClick={() => fetchSalesHistory(1, historySearch, historySort)}
+                className="btn-secondary text-xs"
+              >
+                Search / Refresh
+              </button>
+            </div>
           </div>
 
           {historyLoading ? (
@@ -462,7 +523,7 @@ export default function POSPage() {
                   <div key={sale.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-gray-800 text-sm">Receipt #{sale.id}</span>
+                        <span className="font-bold text-gray-800 text-sm">Receipt #{String(sale.id).padStart(6, '0')}</span>
                         <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full capitalize">
                           {sale.paymentMethod}
                         </span>
@@ -483,11 +544,21 @@ export default function POSPage() {
                       </p>
                     </div>
 
-                    <div className="text-right shrink-0">
-                      <p className="text-base font-bold text-gray-900">NPR {sale.total.toLocaleString()}</p>
-                      {sale.discount > 0 && (
-                        <p className="text-xs text-gray-400">-NPR {sale.discount.toLocaleString()} disc.</p>
-                      )}
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <p className="text-base font-bold text-gray-900">NPR {sale.total.toLocaleString()}</p>
+                        {sale.discount > 0 && (
+                          <p className="text-xs text-gray-400">-NPR {sale.discount.toLocaleString()} disc.</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => printSaleReceipt(sale)}
+                        className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Print Receipt"
+                      >
+                        <FiPrinter className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 ))}
