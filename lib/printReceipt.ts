@@ -1,4 +1,13 @@
 /**
+ * Formats a bill/receipt number as #000001 on first print,
+ * and #000001(1), #000001(2), ... on reprints.
+ */
+export function formatBillNumber(id: number, printCount = 1): string {
+  const base = `#${String(id).padStart(6, '0')}`
+  return printCount > 1 ? `${base}(${printCount - 1})` : base
+}
+
+/**
  * Prints an 80mm thermal receipt HTML string using @media print + window.print()
  * for reliable cross-browser support without popup blockers or iframe quirks.
  */

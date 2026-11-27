@@ -17,15 +17,32 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
         if (!can(user.permissions, user.role, 'tables', 'view')) {
             return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view table sessions' })
         }
-        const { status, page = '1', limit = '20', tableId } = req.query
+        const { status, page = '1', limit = '20', tableId, search, sortOrder } = req.query
         const pageNum = Math.max(1, Number(page) || 1)
         const limitNum = Math.min(100, Math.max(1, Number(limit) || 20))
         const skip = (pageNum - 1) * limitNum
+        const order = sortOrder === 'asc' ? 'asc' : 'desc'
         const where: Record<string, unknown> = {
             table: { outletId: currentOutletId },
         }
         if (status) where.status = status
         if (tableId) where.tableId = Number(tableId)
+
+        const trimmedSearch = typeof search === 'string' ? search.trim() : ''
+        if (trimmedSearch) {
+            const normalizedIdStr = trimmedSearch.startsWith('#') ? trimmedSearch.slice(1).trim() : trimmedSearch
+            const numericId = Number(normalizedIdStr)
+            const orConditions: Record<string, unknown>[] = [
+                { table: { name: { contains: trimmedSearch } } },
+                { paymentMethod: { contains: trimmedSearch } },
+                { customer: { name: { contains: trimmedSearch } } },
+                { customer: { phone: { contains: trimmedSearch } } },
+            ]
+            if (normalizedIdStr && !isNaN(numericId) && Number.isInteger(numericId) && numericId > 0) {
+                orConditions.push({ id: numericId })
+            }
+            where.OR = orConditions
+        }
 
         const [sessions, total] = await Promise.all([
             prisma.tableSession.findMany({
@@ -44,7 +61,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
                         },
                     },
                 },
-                orderBy: { openedAt: 'desc' },
+                orderBy: { openedAt: order },
                 skip,
                 take: limitNum,
             }),

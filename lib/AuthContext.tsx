@@ -178,8 +178,8 @@ export async function apiFetch(
     headers['x-outlet-id'] = activeOutletId.toString()
   }
 
-  const res = await fetch(url, { ...options, headers })
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Request failed')
+  const res = await fetch(url, { ...options, headers, credentials: 'include' })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error((data && typeof data === 'object' && 'error' in data ? String(data.error) : null) || `Request failed (HTTP ${res.status})`)
   return data
 }

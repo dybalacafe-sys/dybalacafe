@@ -1,8 +1,9 @@
 // pages/table-orders.tsx
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
-import { printReceiptHtml } from '@/lib/printReceipt'
+import { printReceiptHtml, formatBillNumber } from '@/lib/printReceipt'
 import toast from 'react-hot-toast'
 import {
     FiPlus, FiMinus, FiTrash2, FiPrinter, FiSearch,
@@ -69,6 +70,7 @@ interface SessionDetail {
     totalAmount: number
     discount: number
     grandTotal: number
+    printCount?: number
     paymentMethod: string
     table: { name: string; capacity: number }
     openedBy: { name: string }
@@ -84,6 +86,7 @@ interface HistorySession {
     closedAt: string | null
     customerName: string | null
     grandTotal: number
+    printCount?: number
     totalAmount: number
     discount: number
     paymentMethod: string
@@ -227,10 +230,11 @@ export default function TableOrdersPage() {
     // Print state — managed imperatively via triggerPrint(), no state needed
 
     // History state
-    const [history, setHistory] = useState<HistorySession[]>([])
-    const [historyTotal, setHistoryTotal] = useState(0)
+    const queryClient = useQueryClient()
     const [historyPage, setHistoryPage] = useState(1)
-    const [historyLoading, setHistoryLoading] = useState(false)
+    const [historySearch, setHistorySearch] = useState('')
+    const [committedSearch, setCommittedSearch] = useState('')
+    const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc')
     const [expandedSession, setExpandedSession] = useState<number | null>(null)
     const HISTORY_LIMIT = 15
 
@@ -264,27 +268,39 @@ export default function TableOrdersPage() {
         }
     }, [token])
 
-    const fetchHistory = useCallback(async (page = 1) => {
-        if (!token) return
-        setHistoryLoading(true)
-        try {
+    const { data: historyData, isFetching: historyLoading } = useQuery<{ sessions: HistorySession[]; total: number }>({
+        queryKey: ['table-sessions', 'closed', historyPage, committedSearch, historySort],
+        queryFn: async () => {
+            const params = new URLSearchParams({
+                status: 'CLOSED',
+                page: String(historyPage),
+                limit: String(HISTORY_LIMIT),
+                sortOrder: historySort,
+            })
+            if (committedSearch.trim()) params.set('search', committedSearch.trim())
             const data = await apiFetch(
-                `/api/table-sessions?status=CLOSED&page=${page}&limit=${HISTORY_LIMIT}`,
+                `/api/table-sessions?${params.toString()}`,
                 {},
-                token
+                token!
             ) as { sessions: HistorySession[]; total: number }
             const list = Array.isArray(data) ? data : ((data && typeof data === 'object' && Array.isArray((data as any).sessions)) ? (data as any).sessions : [])
-            setHistory(list)
-            setHistoryTotal((data as any)?.total ?? list.length)
-            setHistoryPage(page)
-        } finally {
-            setHistoryLoading(false)
-        }
-    }, [token])
+            return { sessions: list, total: (data as any)?.total ?? list.length }
+        },
+        enabled: !!token && view === 'history',
+    })
+
+    const history = historyData?.sessions ?? []
+    const historyTotal = historyData?.total ?? 0
+
+    const fetchHistory = (page = 1, searchVal = historySearch, sortOrder = historySort) => {
+        setHistoryPage(page)
+        setCommittedSearch(searchVal)
+        setHistorySort(sortOrder)
+        queryClient.invalidateQueries({ queryKey: ['table-sessions', 'closed'] })
+    }
 
     useEffect(() => { fetchTables() }, [fetchTables])
     useEffect(() => { fetchProducts() }, [fetchProducts])
-    useEffect(() => { if (view === 'history') fetchHistory(1) }, [view, fetchHistory])
 
     // ── Print (iframe-based, inline styles — no Tailwind dependency) ──
     const printReceipt = usePrintReceipt()
@@ -756,11 +772,41 @@ export default function TableOrdersPage() {
             {/* ══════════════════ HISTORY VIEW ══════════════════ */}
             {view === 'history' && (
                 <div>
-                    <div className="flex items-center justify-between mb-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
                         <h1 className="text-2xl font-bold text-gray-900">Session History</h1>
-                        <button onClick={() => fetchHistory(historyPage)} className="btn-secondary text-sm">
-                            Refresh
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <div className="relative">
+                                <FiSearch className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                <input
+                                    type="text"
+                                    value={historySearch}
+                                    onChange={e => setHistorySearch(e.target.value)}
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') fetchHistory(1, historySearch, historySort)
+                                    }}
+                                    placeholder="Session #, table, customer..."
+                                    className="input pl-8 py-1.5 text-xs w-48"
+                                />
+                            </div>
+                            <select
+                                value={historySort}
+                                onChange={e => {
+                                    const nextSort = e.target.value as 'asc' | 'desc'
+                                    setHistorySort(nextSort)
+                                    fetchHistory(1, historySearch, nextSort)
+                                }}
+                                className="input py-1.5 text-xs w-auto"
+                            >
+                                <option value="desc">Newest First (DESC)</option>
+                                <option value="asc">Oldest First (ASC)</option>
+                            </select>
+                            <button
+                                onClick={() => fetchHistory(1, historySearch, historySort)}
+                                className="btn-secondary text-xs"
+                            >
+                                Search / Refresh
+                            </button>
+                        </div>
                     </div>
 
                     {historyLoading ? (
@@ -777,7 +823,7 @@ export default function TableOrdersPage() {
                                             className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50 transition-colors"
                                         >
                                             <div className="flex items-center gap-3 flex-wrap">
-                                                <span className="text-sm font-semibold text-gray-800">{s.table.name}</span>
+                                                <span className="text-sm font-semibold text-gray-800">{s.table.name} · {formatBillNumber(s.id, s.printCount ?? 1)}</span>
                                                 <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full capitalize">
                           {s.paymentMethod}
                         </span>
@@ -802,6 +848,56 @@ export default function TableOrdersPage() {
                                                         <p className="text-xs text-gray-400">-NPR {fmt(s.discount)} disc.</p>
                                                     )}
                                                 </div>
+                                                <span
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    onClick={async e => {
+                                                        e.stopPropagation()
+                                                        let printCount = (s.printCount ?? 0) + 1
+                                                        if (token) {
+                                                            try {
+                                                                const res = await apiFetch(`/api/table-sessions/${s.id}/print`, { method: 'POST' }, token) as { printCount: number }
+                                                                printCount = res.printCount
+                                                                queryClient.invalidateQueries({ queryKey: ['table-sessions', 'closed'] })
+                                                            } catch {
+                                                                // Fallback to local count
+                                                            }
+                                                        }
+                                                        const billNo = formatBillNumber(s.id, printCount)
+                                                        const allItems = s.orders.flatMap(o => o.items)
+                                                        const itemsHtml = allItems
+                                                            .map(i => `<tr><td>${i.product?.name || 'Item'} × ${i.quantity}</td><td class="right">${(i.price * i.quantity).toLocaleString()}</td></tr>`)
+                                                            .join('')
+                                                        const html = `
+                                                            <div class="center bold large">BILL ${billNo}</div>
+                                                            <div class="center small">${s.table.name}</div>
+                                                            <div class="center small muted">${fmtDate(s.openedAt)}${s.closedAt ? ` → ${fmtTime(s.closedAt)}` : ''}</div>
+                                                            ${s.customerName ? `<div class="center small">${s.customerName}</div>` : ''}
+                                                            <div class="divider"></div>
+                                                            <table>
+                                                              <thead><tr><th>Item</th><th class="right">Amt</th></tr></thead>
+                                                              <tbody>${itemsHtml}</tbody>
+                                                            </table>
+                                                            <div class="divider"></div>
+                                                            ${s.discount > 0 ? `<div class="row"><span>Discount</span><span>-NPR ${fmt(s.discount)}</span></div>` : ''}
+                                                            <div class="row-bold large"><span>TOTAL</span><span>NPR ${fmt(s.grandTotal)}</span></div>
+                                                            <div class="row small"><span>Payment</span><span style="text-transform:capitalize">${s.paymentMethod || 'cash'}</span></div>
+                                                            <div class="divider"></div>
+                                                            <div class="center small muted">Thank you!</div>
+                                                        `
+                                                        printReceipt(html)
+                                                    }}
+                                                    onKeyDown={e => {
+                                                        if (e.key === 'Enter' || e.key === ' ') {
+                                                            e.preventDefault()
+                                                            ;(e.currentTarget as HTMLElement).click()
+                                                        }
+                                                    }}
+                                                    className="p-1.5 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
+                                                    title="Print Bill"
+                                                >
+                                                    <FiPrinter size={15} />
+                                                </span>
                                                 <FiChevronRight
                                                     size={16}
                                                     className={`text-gray-400 transition-transform ${expandedSession === s.id ? 'rotate-90' : ''}`}

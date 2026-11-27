@@ -153,6 +153,7 @@ export const purchasesService = {
       }
 
       let remaining = numAmount
+      const purchaseUpdates: Promise<unknown>[] = []
       for (const p of unpaidPurchases) {
         if (remaining <= 0) break
 
@@ -160,19 +161,22 @@ export const purchasesService = {
         const newPaid = p.paid + payThis
         const newDue = p.due - payThis
 
-        await tx.purchase.update({
-          where: { id: p.id },
-          data: {
-            paid: newPaid,
-            due: newDue,
-            note: p.note
-              ? `${p.note} | Paid NPR ${payThis.toLocaleString()} on ${paymentDate.toISOString().slice(0, 10)}`
-              : `Paid NPR ${payThis.toLocaleString()} on ${paymentDate.toISOString().slice(0, 10)}`,
-          },
-        })
+        purchaseUpdates.push(
+          tx.purchase.update({
+            where: { id: p.id },
+            data: {
+              paid: newPaid,
+              due: newDue,
+              note: p.note
+                ? `${p.note} | Paid NPR ${payThis.toLocaleString()} on ${paymentDate.toISOString().slice(0, 10)}`
+                : `Paid NPR ${payThis.toLocaleString()} on ${paymentDate.toISOString().slice(0, 10)}`,
+            },
+          })
+        )
 
         remaining -= payThis
       }
+      await Promise.all(purchaseUpdates)
 
       // Record cash payment in operating expenses
       await tx.expense.create({

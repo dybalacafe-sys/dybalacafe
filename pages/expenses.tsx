@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
 import toast from 'react-hot-toast'
@@ -52,8 +53,6 @@ export default function ExpensesPage() {
   const [activeTab, setActiveTab] = useState<'daily' | 'vendors'>('daily')
 
   // Daily Expenses state
-  const [expenses, setExpenses] = useState<Expense[]>([])
-  const [total, setTotal] = useState(0)
   const [showModal, setShowModal] = useState(false)
   const [form, setForm] = useState({
     category: 'Rent',
@@ -65,9 +64,6 @@ export default function ExpensesPage() {
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
 
   // Vendor & Purchase state
-  const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [purchases, setPurchases] = useState<Purchase[]>([])
-  const [vendorLoading, setVendorLoading] = useState(false)
 
   // Modals for Vendor
   const [showPurchaseModal, setShowPurchaseModal] = useState(false)
@@ -96,49 +92,43 @@ export default function ExpensesPage() {
     date: new Date().toISOString().slice(0, 10),
   })
 
+  const queryClient = useQueryClient()
+
   // Fetch daily expenses
-  const fetchExpenses = useCallback(async () => {
-    if (!token) return
-    try {
-      const data = (await apiFetch(
+  const { data: expensesData } = useQuery<{ expenses: Expense[]; total: number }>({
+    queryKey: ['expenses', selectedOutlet?.id, startDate, endDate],
+    queryFn: () =>
+      apiFetch(
         `/api/expenses?startDate=${startDate}&endDate=${endDate}T23:59:59`,
         {},
-        token
-      )) as { expenses: Expense[]; total: number }
-      setExpenses(data.expenses || [])
-      setTotal(data.total || 0)
-    } catch (e) {
-      console.error(e)
-    }
-  }, [token, startDate, endDate, selectedOutlet?.id])
+        token!
+      ) as Promise<{ expenses: Expense[]; total: number }>,
+    enabled: !!token,
+  })
+
+  const expenses = expensesData?.expenses ?? []
+  const total = expensesData?.total ?? 0
+  const fetchExpenses = () => queryClient.invalidateQueries({ queryKey: ['expenses', selectedOutlet?.id] })
 
   // Fetch suppliers and purchases
-  const fetchVendorsData = useCallback(async () => {
-    if (!token) return
-    setVendorLoading(true)
-    try {
+  const { data: vendorsData, isFetching: vendorLoading } = useQuery<{ suppliers: Supplier[]; purchases: Purchase[] }>({
+    queryKey: ['vendors', selectedOutlet?.id],
+    queryFn: async () => {
       const [supData, purData] = await Promise.all([
-        apiFetch('/api/suppliers', {}, token) as Promise<Supplier[]>,
-        apiFetch('/api/purchases', {}, token) as Promise<Purchase[]>,
+        apiFetch('/api/suppliers', {}, token!) as Promise<Supplier[]>,
+        apiFetch('/api/purchases', {}, token!) as Promise<Purchase[]>,
       ])
-      setSuppliers(Array.isArray(supData) ? supData : [])
-      setPurchases(Array.isArray(purData) ? purData : [])
-    } catch (e) {
-      console.error(e)
-    } finally {
-      setVendorLoading(false)
-    }
-  }, [token, selectedOutlet?.id])
+      return {
+        suppliers: Array.isArray(supData) ? supData : [],
+        purchases: Array.isArray(purData) ? purData : [],
+      }
+    },
+    enabled: !!token && activeTab === 'vendors',
+  })
 
-  useEffect(() => {
-    fetchExpenses()
-  }, [fetchExpenses])
-
-  useEffect(() => {
-    if (activeTab === 'vendors') {
-      fetchVendorsData()
-    }
-  }, [activeTab, fetchVendorsData])
+  const suppliers = vendorsData?.suppliers ?? []
+  const purchases = vendorsData?.purchases ?? []
+  const fetchVendorsData = () => queryClient.invalidateQueries({ queryKey: ['vendors', selectedOutlet?.id] })
 
   // Save regular expense
   const handleSaveExpense = async () => {
@@ -671,7 +661,7 @@ export default function ExpensesPage() {
         {/* MODAL 1: ADD OPERATING EXPENSE */}
         {/* ========================================================================= */}
         {showModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl">
               <h2 className="text-lg font-bold text-gray-900">Add Operating Expense</h2>
               <div>
@@ -730,7 +720,7 @@ export default function ExpensesPage() {
         {/* MODAL 2: ADD VENDOR / SUPPLIER */}
         {/* ========================================================================= */}
         {showSupplierModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl">
               <h2 className="text-lg font-bold text-gray-900">Add New Supplier / Vendor</h2>
               <div>
@@ -779,7 +769,7 @@ export default function ExpensesPage() {
         {/* MODAL 3: RECORD PURCHASE BILL*/}
         {/* ========================================================================= */}
         {showPurchaseModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl">
               <h2 className="text-lg font-bold text-gray-900">Record Vendor Purchase Bill</h2>
               <div>
@@ -864,7 +854,7 @@ export default function ExpensesPage() {
         {/* MODAL 4: RECORD PAYMENT TO VENDOR (साहुलाई भुक्तानी) */}
         {/* ========================================================================= */}
         {showPaymentModal && selectedSupplierForPayment && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="bg-white rounded-xl w-full max-w-md p-6 space-y-4 shadow-xl">
               <div>
                 <h2 className="text-lg font-bold text-gray-900">Record Vendor Payment</h2>

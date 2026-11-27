@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
 import { Bar, Doughnut } from 'react-chartjs-2'
@@ -15,24 +16,26 @@ export default function ReportsPage() {
   const [tab, setTab] = useState<'sales' | 'stock' | 'orders' | 'product-sales'>('sales')
   const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
   const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10))
-  const [data, setData] = useState<unknown>(null)
-  const [chartData, setChartData] = useState<Array<{ date: string; total: number }>>([])
-  const [loading, setLoading] = useState(false)
-
-  const fetchReport = useCallback(async () => {
-    if (!token) return
-    setLoading(true)
-    try {
+  const { data: reportResult, isFetching: loading, refetch } = useQuery<{
+    report: unknown
+    chart: Array<{ date: string; total: number }>
+  }>({
+    queryKey: ['reports', selectedOutlet?.id, tab, startDate, endDate],
+    queryFn: async () => {
       const [report, chart] = await Promise.all([
-        apiFetch(`/api/reports?type=${tab}&startDate=${startDate}T00:00:00&endDate=${endDate}T23:59:59`, {}, token),
-        tab === 'sales' ? apiFetch('/api/reports?type=daily-chart', {}, token) : Promise.resolve([]),
+        apiFetch(`/api/reports?type=${tab}&startDate=${startDate}T00:00:00&endDate=${endDate}T23:59:59`, {}, token!),
+        tab === 'sales' ? apiFetch('/api/reports?type=daily-chart', {}, token!) : Promise.resolve([]),
       ])
-      setData(report)
-      if (tab === 'sales') setChartData(chart as Array<{ date: string; total: number }>)
-    } finally { setLoading(false) }
-  }, [token, tab, startDate, endDate, selectedOutlet?.id])
+      return {
+        report,
+        chart: tab === 'sales' ? (chart as Array<{ date: string; total: number }>) : [],
+      }
+    },
+    enabled: !!token,
+  })
 
-  useEffect(() => { fetchReport() }, [fetchReport])
+  const data = reportResult?.report ?? null
+  const chartData = reportResult?.chart ?? []
 
   const tabs = [
     { key: 'sales', label: '📊 Sales Report' },
@@ -74,7 +77,7 @@ export default function ReportsPage() {
             <label className="label text-xs">End Date</label>
             <input type="date" className="input" value={endDate} onChange={e => setEndDate(e.target.value)} />
           </div>
-          <button onClick={fetchReport} className="btn-primary">Apply</button>
+          <button onClick={() => refetch()} className="btn-primary">Apply</button>
         </div>
 
         {loading ? (

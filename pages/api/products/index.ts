@@ -119,16 +119,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
         })
 
         if (allOutlets) {
-          const activeOutlets = await tx.outlet.findMany({ where: { active: true } })
-          for (const outlet of activeOutlets) {
-            await tx.outletProduct.create({
-              data: {
+          const activeOutlets = await tx.outlet.findMany({ where: { active: true }, select: { id: true } })
+          if (activeOutlets.length > 0) {
+            await tx.outletProduct.createMany({
+              data: activeOutlets.map((outlet) => ({
                 outletId: outlet.id,
                 productId: p.id,
                 stock: outlet.id === currentOutletId ? initialStock : 0,
                 minStock: initialMinStock,
                 active: true,
-              },
+              })),
             })
           }
         } else {

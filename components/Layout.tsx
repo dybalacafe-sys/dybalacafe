@@ -1,11 +1,11 @@
-import { ReactNode, useState } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/lib/AuthContext'
 import {
   FiHome, FiShoppingCart, FiUsers,
   FiBarChart2, FiLogOut, FiMenu, FiX, FiDollarSign,
-  FiShoppingBag, FiUser, FiGrid, FiMapPin, FiChevronDown
+  FiShoppingBag, FiUser, FiGrid, FiMapPin, FiChevronDown, FiChevronLeft, FiChevronRight
 } from 'react-icons/fi'
 import { ModuleKey } from '@/lib/permissions'
 
@@ -31,6 +31,23 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { user, logout, can, outlets, selectedOutlet, setSelectedOutlet } = useAuth()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  useEffect(() => {
+    if (localStorage.getItem('bms_sidebar_collapsed') === 'true') {
+      setSidebarCollapsed(true)
+    }
+  }, [])
+
+  const toggleSidebarCollapsed = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('bms_sidebar_collapsed', String(next))
+      }
+      return next
+    })
+  }
 
   const isCafe = selectedOutlet?.code === 'CAF' || selectedOutlet?.type?.code === 'CAFE' || selectedOutlet?.name?.toLowerCase().includes('cafe')
 
@@ -56,17 +73,26 @@ export default function Layout({ children }: { children: ReactNode }) {
     <div className="flex h-screen bg-gray-50">
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 text-white transform transition-transform duration-200 ease-in-out
+        className={`fixed inset-y-0 left-0 z-50 w-64 ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-64'} bg-gray-900 text-white transform transition-all duration-200 ease-in-out
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 lg:static lg:z-auto flex flex-col justify-between`}
       >
         <div>
-          <div className="flex items-center justify-between p-4 border-b border-gray-700">
-            <div>
-              <h1 className="text-lg font-bold text-white">Dybala BMS</h1>
-              <p className="text-xs text-gray-400">
-                {isCafe ? 'Cafe & Bakery Suite' : 'Multi-Outlet Management'}
-              </p>
-            </div>
+          <div className={`flex items-center ${sidebarCollapsed ? 'lg:justify-center' : 'justify-between'} p-4 border-b border-gray-700`}>
+            {!sidebarCollapsed && (
+              <div>
+                <h1 className="text-lg font-bold text-white">Dybala BMS</h1>
+                <p className="text-xs text-gray-400">
+                  {isCafe ? 'Cafe & Bakery Suite' : 'Multi-Outlet Management'}
+                </p>
+              </div>
+            )}
+            <button
+              className="hidden lg:inline-flex p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+              onClick={toggleSidebarCollapsed}
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {sidebarCollapsed ? <FiChevronRight size={18} /> : <FiChevronLeft size={18} />}
+            </button>
             <button className="lg:hidden text-gray-400" onClick={() => setSidebarOpen(false)}>
               <FiX size={20} />
             </button>
@@ -80,11 +106,12 @@ export default function Layout({ children }: { children: ReactNode }) {
                   key={item.href}
                   href={item.href}
                   onClick={() => setSidebarOpen(false)}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                  title={sidebarCollapsed ? item.label : undefined}
+                  className={`flex items-center ${sidebarCollapsed ? 'lg:justify-center' : 'gap-3'} px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
                     ${active ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-800 hover:text-white'}`}
                 >
-                  <span className="text-lg">{item.icon}</span>
-                  {item.label}
+                  <span className="text-lg shrink-0">{item.icon}</span>
+                  {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
                 </Link>
               )
             })}
@@ -92,27 +119,31 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <div className="p-4 border-t border-gray-700">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-sm font-bold">
+          <div className={`flex items-center ${sidebarCollapsed ? 'lg:justify-center' : 'gap-3'} mb-3`}>
+            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-sm font-bold shrink-0">
               {user?.name?.charAt(0).toUpperCase()}
             </div>
-            <div className="overflow-hidden">
-              <p className="text-sm font-medium text-white truncate">{user?.name}</p>
-              <p className="text-xs text-gray-400">{user?.role?.replace('_', ' ')}</p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="overflow-hidden">
+                <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+                <p className="text-xs text-gray-400">{user?.role?.replace('_', ' ')}</p>
+              </div>
+            )}
           </div>
           <button
             onClick={logout}
-            className="flex items-center gap-2 text-gray-400 hover:text-white text-sm w-full transition-colors"
+            title={sidebarCollapsed ? 'Sign Out' : undefined}
+            className={`flex items-center ${sidebarCollapsed ? 'lg:justify-center' : 'gap-2'} text-gray-400 hover:text-white text-sm w-full transition-colors`}
           >
-            <FiLogOut /> Sign Out
+            <FiLogOut className="shrink-0" />
+            {!sidebarCollapsed && <span>Sign Out</span>}
           </button>
         </div>
       </aside>
 
       {/* Overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Main content */}
@@ -137,7 +168,7 @@ export default function Layout({ children }: { children: ReactNode }) {
                   aria-label="Active Outlet (Header)"
                   value={selectedOutlet?.id || ''}
                   onChange={(e) => handleOutletChange(Number(e.target.value))}
-                  className="bg-transparent text-blue-900 font-semibold focus:outline-none cursor-pointer text-xs"
+                  className="appearance-none bg-transparent text-blue-900 font-semibold focus:outline-none cursor-pointer text-xs"
                 >
                   {(outlets || []).map((o) => (
                     <option key={o.id} value={o.id}>

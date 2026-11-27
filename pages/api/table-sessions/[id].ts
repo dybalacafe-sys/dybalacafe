@@ -253,7 +253,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
                         },
                     },
                 })
-            })
+            }, { timeout: 15000 })
 
             return res.status(200).json(closed)
         } catch (err: unknown) {

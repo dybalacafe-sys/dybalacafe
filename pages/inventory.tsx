@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
 import toast from 'react-hot-toast'
@@ -22,9 +23,7 @@ export default function InventoryPage() {
   const { token, can, selectedOutlet } = useAuth()
   const isCafe = selectedOutlet?.code === 'CAF' || selectedOutlet?.type?.code === 'CAFE' || selectedOutlet?.name?.toLowerCase().includes('cafe')
 
-  const [products, setProducts] = useState<Product[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
-  const [rawMaterials, setRawMaterials] = useState<Product[]>([])
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [showModal, setShowModal] = useState(false)
@@ -36,19 +35,25 @@ export default function InventoryPage() {
   const [recipe, setRecipe] = useState<RecipeRow[]>([])
   const [stockAdjust, setStockAdjust] = useState({ type: 'IN', quantity: '', note: '' })
 
-  const fetchData = useCallback(async () => {
-    if (!token) return
-    const [prods, cats] = await Promise.all([
-      apiFetch('/api/products', {}, token),
-      apiFetch('/api/categories', {}, token),
-    ])
-    const allProducts = Array.isArray(prods) ? prods as Product[] : []
-    setProducts(allProducts)
-    setRawMaterials(allProducts.filter(p => p.type === 'raw_material'))
-    setCategories(Array.isArray(cats) ? cats as Category[] : [])
-  }, [token])
+  const { data: inventoryData } = useQuery<{ products: Product[]; categories: Category[] }>({
+    queryKey: ['inventory', selectedOutlet?.id],
+    queryFn: async () => {
+      const [prods, cats] = await Promise.all([
+        apiFetch('/api/products', {}, token!),
+        apiFetch('/api/categories', {}, token!),
+      ])
+      return {
+        products: Array.isArray(prods) ? (prods as Product[]) : [],
+        categories: Array.isArray(cats) ? (cats as Category[]) : [],
+      }
+    },
+    enabled: !!token,
+  })
 
-  useEffect(() => { fetchData() }, [fetchData, selectedOutlet?.id])
+  const products = inventoryData?.products ?? []
+  const categories = inventoryData?.categories ?? []
+  const rawMaterials = products.filter(p => p.type === 'raw_material')
+  const fetchData = () => queryClient.invalidateQueries({ queryKey: ['inventory', selectedOutlet?.id] })
 
   const filtered = products.filter(p => {
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase())
@@ -250,7 +255,7 @@ export default function InventoryPage() {
 
       {/* Product Modal */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto shadow-xl">
             <h2 className="text-lg font-bold">{editing ? 'Edit Product' : 'Add Product'}</h2>
             <div className="grid grid-cols-2 gap-4">
@@ -376,7 +381,7 @@ export default function InventoryPage() {
 
       {/* Stock Adjust Modal */}
       {showStockModal && selectedProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl w-full max-w-sm p-6 space-y-4 shadow-xl">
             <div>
               <h2 className="text-lg font-bold">Stock Adjust</h2>

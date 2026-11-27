@@ -1,7 +1,10 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Layout from '@/components/Layout'
 import { useAuth, apiFetch } from '@/lib/AuthContext'
-import { printReceiptHtml } from '@/lib/printReceipt'
+import { printReceiptHtml, formatBillNumber } from '@/lib/printReceipt'
+import { createSaleSchema } from '@/lib/schemas/sales.schema'
+import { usePosStore } from '@/lib/stores/posStore'
 import toast from 'react-hot-toast'
 import {
   FiSearch, FiTrash2, FiPlus, FiMinus, FiCheck,
@@ -45,17 +48,29 @@ interface Sale {
   discount: number
   paymentMethod: string
   pointsEarned: number
+  printCount?: number
   createdAt: string
   customer: { name: string; phone: string; points: number } | null
   items: SaleItem[]
 }
 
-function printSaleReceipt(sale: Sale) {
+async function printSaleReceipt(sale: Sale, token: string | null, onPrinted?: () => void) {
+  let printCount = (sale.printCount ?? 0) + 1
+  if (token) {
+    try {
+      const res = await apiFetch(`/api/sales/${sale.id}/print`, { method: 'POST' }, token) as { printCount: number }
+      printCount = res.printCount
+      onPrinted?.()
+    } catch {
+      // Fallback to local count if print tracking fails
+    }
+  }
+  const billNo = formatBillNumber(sale.id, printCount)
   const itemsHtml = sale.items
     .map(i => `<tr><td>${i.product.name} × ${i.quantity}</td><td class="right">${(i.price * i.quantity).toLocaleString()}</td></tr>`)
     .join('')
   const html = `
-    <div class="center bold large">RECEIPT #${String(sale.id).padStart(6, '0')}</div>
+    <div class="center bold large">RECEIPT ${billNo}</div>
     <div class="center small muted">${new Date(sale.createdAt).toLocaleString('en-NP')}</div>
     ${sale.customer ? `<div class="center small">${sale.customer.name} (${sale.customer.phone})</div>` : ''}
     <div class="divider"></div>
@@ -81,7 +96,6 @@ export default function POSPage() {
   const [activeTab, setActiveTab] = useState<'pos' | 'history'>('pos')
 
   // POS state
-  const [products, setProducts] = useState<Product[]>([])
 
   useEffect(() => {
     if (selectedOutlet?.terminals && selectedOutlet.terminals.length > 0) {
@@ -90,63 +104,87 @@ export default function POSPage() {
       setTerminalId(null)
     }
   }, [selectedOutlet])
-  const [cart, setCart] = useState<CartItem[]>([])
+  const queryClient = useQueryClient()
+  const {
+    cart, setCart,
+    discount, setDiscount,
+    paymentMethod, setPaymentMethod,
+    customerPhone, setCustomerPhone,
+    customerName, setCustomerName,
+    resetCheckout,
+  } = usePosStore()
   const [search, setSearch] = useState('')
-  const [discount, setDiscount] = useState(0)
-  const [paymentMethod, setPaymentMethod] = useState('cash')
-  const [loading, setLoading] = useState(false)
   const [lastReceipt, setLastReceipt] = useState<Sale | null>(null)
 
   // Customer state
-  const [customerPhone, setCustomerPhone] = useState('')
-  const [customerName, setCustomerName] = useState('')
   const [customerInfo, setCustomerInfo] = useState<CustomerInfo | null>(null)
   const [customerLookupState, setCustomerLookupState] = useState<'idle' | 'found' | 'new'>('idle')
   const lookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Sales history state
-  const [sales, setSales] = useState<Sale[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
   const [historyPage, setHistoryPage] = useState(1)
-  const [historyTotal, setHistoryTotal] = useState(0)
   const [historySearch, setHistorySearch] = useState('')
+  const [committedSearch, setCommittedSearch] = useState('')
   const [historySort, setHistorySort] = useState<'desc' | 'asc'>('desc')
   const HISTORY_LIMIT = 15
 
-  const fetchProducts = useCallback(async () => {
-    if (!token) return
-    const data = await apiFetch('/api/products?type=finished', {}, token)
-    setProducts(data as Product[])
-  }, [token])
+  const { data: products = [] } = useQuery<Product[]>({
+    queryKey: ['products', selectedOutlet?.id],
+    queryFn: () => apiFetch('/api/products?type=finished', {}, token!) as Promise<Product[]>,
+    enabled: !!token,
+  })
 
-  const fetchSalesHistory = useCallback(async (page = 1, search = '', sortOrder = historySort) => {
-    if (!token) return
-    setHistoryLoading(true)
-    try {
+  const { data: salesData, isFetching: historyLoading } = useQuery<{ sales: Sale[]; total: number }>({
+    queryKey: ['sales', selectedOutlet?.id, historyPage, committedSearch, historySort],
+    queryFn: async () => {
       const params = new URLSearchParams({
-        page: String(page),
+        page: String(historyPage),
         limit: String(HISTORY_LIMIT),
-        sortOrder,
+        sortOrder: historySort,
       })
-      if (search.trim()) params.set('search', search.trim())
-      const data = await apiFetch(`/api/sales?${params.toString()}`, {}, token)
+      if (committedSearch.trim()) params.set('search', committedSearch.trim())
+      const data = await apiFetch(`/api/sales?${params.toString()}`, {}, token!)
       const list = Array.isArray(data) ? data : ((data && typeof data === 'object' && Array.isArray((data as any).sales)) ? (data as any).sales : [])
-      setSales(list)
-      setHistoryTotal((data as any)?.total ?? list.length)
-      setHistoryPage(page)
-    } catch (e) {
-      console.error(e)
-      setSales([])
-    } finally {
-      setHistoryLoading(false)
-    }
-  }, [token, historySort])
+      return { sales: list, total: (data as any)?.total ?? list.length }
+    },
+    enabled: !!token && activeTab === 'history',
+  })
 
-  useEffect(() => { fetchProducts() }, [fetchProducts, selectedOutlet?.id])
+  const sales = salesData?.sales ?? []
+  const historyTotal = salesData?.total ?? 0
 
-  useEffect(() => {
-    if (activeTab === 'history') fetchSalesHistory(1)
-  }, [activeTab, fetchSalesHistory, selectedOutlet?.id])
+  const fetchSalesHistory = (page = 1, searchVal = historySearch, sortOrder = historySort) => {
+    setHistoryPage(page)
+    setCommittedSearch(searchVal)
+    setHistorySort(sortOrder)
+    queryClient.invalidateQueries({ queryKey: ['sales', selectedOutlet?.id] })
+  }
+
+  const checkoutMutation = useMutation({
+    mutationFn: (payload: unknown) =>
+      apiFetch('/api/sales', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }, token!),
+    onSuccess: (res) => {
+      const completedSale = res as Sale
+      setLastReceipt(completedSale)
+      printSaleReceipt(completedSale, token, () => {
+        queryClient.invalidateQueries({ queryKey: ['sales', selectedOutlet?.id] })
+      })
+      resetCheckout()
+      setCustomerInfo(null)
+      setCustomerLookupState('idle')
+      toast.success('Sale completed!')
+      queryClient.invalidateQueries({ queryKey: ['products', selectedOutlet?.id] })
+      queryClient.invalidateQueries({ queryKey: ['sales', selectedOutlet?.id] })
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof Error ? err.message : 'Checkout failed')
+    },
+  })
+
+  const loading = checkoutMutation.isPending
 
   // Customer phone lookup with debounce
   useEffect(() => {
@@ -213,37 +251,22 @@ export default function POSPage() {
   const subtotal = cart.reduce((s, i) => s + i.subtotal, 0)
   const grandTotal = Math.max(0, subtotal - discount)
 
-  const handleCheckout = async () => {
-    if (cart.length === 0) return
-    setLoading(true)
-    try {
-      const res = await apiFetch('/api/sales', {
-        method: 'POST',
-        body: JSON.stringify({
-          items: cart.map(i => ({ productId: i.id, quantity: i.quantity, price: i.price })),
-          discount,
-          paymentMethod,
-          customerPhone: customerPhone || undefined,
-          customerName: customerName || undefined,
-          terminalId: terminalId || undefined,
-        }),
-      }, token)
-      const completedSale = res as Sale
-      setLastReceipt(completedSale)
-      printSaleReceipt(completedSale)
-      setCart([])
-      setDiscount(0)
-      setCustomerPhone('')
-      setCustomerName('')
-      setCustomerInfo(null)
-      setCustomerLookupState('idle')
-      toast.success('Sale completed!')
-      fetchProducts()
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Checkout failed')
-    } finally {
-      setLoading(false)
+  const handleCheckout = () => {
+    const parsed = createSaleSchema.safeParse({
+      items: cart.map(i => ({ productId: i.id, quantity: i.quantity, price: i.price })),
+      discount,
+      paymentMethod,
+      customerPhone: customerPhone || undefined,
+      customerName: customerName || undefined,
+      terminalId: terminalId || undefined,
+    })
+
+    if (!parsed.success) {
+      toast.error(parsed.error.issues[0]?.message || 'Invalid checkout data')
+      return
     }
+
+    checkoutMutation.mutate(parsed.data)
   }
 
   const filtered = products.filter(p =>
@@ -523,7 +546,7 @@ export default function POSPage() {
                   <div key={sale.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-gray-800 text-sm">Receipt #{String(sale.id).padStart(6, '0')}</span>
+                        <span className="font-bold text-gray-800 text-sm">Receipt {formatBillNumber(sale.id, sale.printCount ?? 1)}</span>
                         <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full capitalize">
                           {sale.paymentMethod}
                         </span>
@@ -553,7 +576,7 @@ export default function POSPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => printSaleReceipt(sale)}
+                        onClick={() => printSaleReceipt(sale, token, () => queryClient.invalidateQueries({ queryKey: ['sales', selectedOutlet?.id] }))}
                         className="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors"
                         title="Print Receipt"
                       >

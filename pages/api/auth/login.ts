@@ -33,6 +33,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       permissions,
     })
 
+    const isProd = process.env.NODE_ENV === 'production'
+    res.setHeader(
+      'Set-Cookie',
+      `bms_token=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800${isProd ? '; Secure' : ''}`
+    )
+
     return res.status(200).json({
       token,
       user: {

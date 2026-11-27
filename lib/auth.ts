@@ -38,7 +38,7 @@ export function getTokenFromRequest(req: NextApiRequest): string | null {
   if (authHeader && authHeader.startsWith('Bearer ')) {
     return authHeader.substring(7)
   }
-  const cookie = req.cookies?.token
+  const cookie = req.cookies?.bms_token || req.cookies?.token
   return cookie || null
 }
 

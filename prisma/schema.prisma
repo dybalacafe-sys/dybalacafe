@@ -198,6 +198,7 @@ model Sale {
   discount      Float     @default(0)
   paymentMethod String    @default("cash")
   pointsEarned  Float     @default(0)
+  printCount    Int       @default(0)
   note          String?
   createdAt     DateTime  @default(now())
   items         SaleItem[]
@@ -360,6 +361,7 @@ model TableSession {
   closedBy       User?         @relation("SessionClosedBy", fields: [closedById], references: [id])
   status         SessionStatus @default(OPEN)
   totalAmount    Float         @default(0)
+  printCount     Int           @default(0)
   discount       Float         @default(0)
   grandTotal     Float         @default(0)
   paymentMethod  String        @default("cash")

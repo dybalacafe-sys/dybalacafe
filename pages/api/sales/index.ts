@@ -2,56 +2,55 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { withAuth, JWTPayload, getOutletIdFromRequest } from '@/lib/auth'
 import { can } from '@/lib/permissions'
 import { salesService } from '@/lib/services/sales.service'
+import { createSaleSchema, getSalesQuerySchema } from '@/lib/schemas/sales.schema'
 
 async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPayload) {
-  const outletId = await getOutletIdFromRequest(req, user)
+  try {
+    const outletId = await getOutletIdFromRequest(req, user)
 
-  if (req.method === 'GET') {
-    if (!can(user.permissions, user.role, 'pos', 'view')) {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view sales' })
+    if (req.method === 'GET') {
+      if (!can(user.permissions, user.role, 'pos', 'view')) {
+        return res.status(403).json({ error: 'Forbidden: Insufficient permissions to view sales' })
+      }
+
+      const parsed = getSalesQuerySchema.safeParse(req.query)
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid query parameters' })
+      }
+
+      const result = await salesService.getSales({
+        outletId,
+        ...parsed.data,
+      })
+
+      return res.status(200).json(result)
     }
 
-    const { startDate, endDate, customerId, search, sortOrder, page, limit } = req.query
-    const result = await salesService.getSales({
-      outletId,
-      startDate: startDate as string | undefined,
-      endDate: endDate as string | undefined,
-      customerId: customerId ? Number(customerId) : undefined,
-      search: search as string | undefined,
-      sortOrder: sortOrder === 'asc' ? 'asc' : 'desc',
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    })
+    if (req.method === 'POST') {
+      if (!can(user.permissions, user.role, 'pos', 'edit')) {
+        return res.status(403).json({ error: 'Forbidden: Insufficient permissions to create sales' })
+      }
 
-    return res.status(200).json(result)
-  }
+      const parsed = createSaleSchema.safeParse(req.body)
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.issues[0]?.message || 'Invalid sale payload' })
+      }
 
-  if (req.method === 'POST') {
-    if (!can(user.permissions, user.role, 'pos', 'edit')) {
-      return res.status(403).json({ error: 'Forbidden: Insufficient permissions to create sales' })
-    }
-
-    const { items, discount, paymentMethod, customerPhone, customerName, note, terminalId } = req.body
-
-    try {
       const sale = await salesService.createSale({
         outletId,
         userId: user.userId,
-        items,
-        discount,
-        paymentMethod,
-        customerPhone,
-        customerName,
-        note,
-        terminalId,
+        ...parsed.data,
       })
       return res.status(201).json(sale)
-    } catch (err: unknown) {
-      return res.status(400).json({ error: err instanceof Error ? err.message : 'Sale processing failed' })
     }
-  }
 
-  return res.status(405).json({ error: 'Method not allowed' })
+    return res.status(405).json({ error: 'Method not allowed' })
+  } catch (err: unknown) {
+    console.error('[API /api/sales]', err)
+    const message = err instanceof Error ? err.message : 'Internal server error'
+    const status = message.startsWith('Forbidden') ? 403 : req.method === 'POST' ? 400 : 500
+    return res.status(status).json({ error: message })
+  }
 }
 
 export default withAuth(handler)
