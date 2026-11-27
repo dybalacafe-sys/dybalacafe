@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, createContext, useContext, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/router'
 import { useAuth } from '@/lib/AuthContext'
@@ -27,7 +27,20 @@ const navItems: NavItem[] = [
   { href: '/users', label: 'Users', icon: <FiUsers />, module: 'users' },
 ]
 
+const LayoutMountedContext = createContext(false)
+
 export default function Layout({ children }: { children: ReactNode }) {
+  const isNested = useContext(LayoutMountedContext)
+  if (isNested) return <>{children}</>
+
+  return (
+    <LayoutMountedContext.Provider value={true}>
+      <LayoutInner>{children}</LayoutInner>
+    </LayoutMountedContext.Provider>
+  )
+}
+
+function LayoutInner({ children }: { children: ReactNode }) {
   const { user, logout, can, outlets, selectedOutlet, setSelectedOutlet } = useAuth()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
