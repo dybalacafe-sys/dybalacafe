@@ -98,33 +98,35 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
       // Transaction: deduct raw materials atomically and add to finished product in OutletProduct
       await prisma.$transaction(async (tx) => {
         // Concurrency-safe atomic raw material deduction
-        for (const recipe of product.recipeItems) {
-          const required = recipe.quantity * numQty
-          const updatedIng = await tx.outletProduct.updateMany({
-            where: {
-              outletId,
-              productId: recipe.ingredientId,
-              stock: { gte: required },
-            },
-            data: {
-              stock: { decrement: required },
-            },
-          })
+        const stockLogs: { outletId: number; productId: number; type: string; quantity: number; note: string }[] = []
 
-          if (updatedIng.count === 0) {
-            throw new Error(`Insufficient stock for ingredient ${recipe.ingredient.name} in concurrent production run`)
-          }
+        await Promise.all(
+          product.recipeItems.map(async (recipe) => {
+            const required = recipe.quantity * numQty
+            const updatedIng = await tx.outletProduct.updateMany({
+              where: {
+                outletId,
+                productId: recipe.ingredientId,
+                stock: { gte: required },
+              },
+              data: {
+                stock: { decrement: required },
+              },
+            })
 
-          await tx.stockLog.create({
-            data: {
+            if (updatedIng.count === 0) {
+              throw new Error(`Insufficient stock for ingredient ${recipe.ingredient.name} in concurrent production run`)
+            }
+
+            stockLogs.push({
               outletId,
               productId: recipe.ingredientId,
               type: 'OUT',
               quantity: required,
               note: `Production: ${numQty} × ${product.name}`,
-            },
+            })
           })
-        }
+        )
 
         // Add to finished product stock
         await tx.outletProduct.upsert({
@@ -132,16 +134,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
           update: { stock: { increment: numQty } },
           create: { outletId, productId: product.id, stock: numQty, minStock: 5 },
         })
-        await tx.stockLog.create({
-          data: {
-            outletId,
-            productId: product.id,
-            type: 'IN',
-            quantity: numQty,
-            note: `Produced from raw materials`,
-          },
+        stockLogs.push({
+          outletId,
+          productId: product.id,
+          type: 'IN',
+          quantity: numQty,
+          note: `Produced from raw materials`,
         })
-      })
+
+        await tx.stockLog.createMany({ data: stockLogs })
+      }, { timeout: 15000 })
 
       return res.status(201).json({ message: `Produced ${numQty} × ${product.name} successfully` })
     } catch (err: unknown) {

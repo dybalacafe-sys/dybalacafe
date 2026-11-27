@@ -170,64 +170,60 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: JWTPaylo
                     throw new Error('Session already closed or being processed by another cashier')
                 }
 
-                // Atomic conditional stock updates
+                // Atomic conditional stock updates (aggregated per productId)
+                const stockDecrements = new Map<number, { qty: number; label: string }>()
+                const stockLogs: { outletId: number; productId: number; type: string; quantity: number; note: string }[] = []
+
+                const addDecrement = (productId: number, qty: number, label: string) => {
+                    const existing = stockDecrements.get(productId)
+                    if (existing) {
+                        existing.qty += qty
+                    } else {
+                        stockDecrements.set(productId, { qty, label })
+                    }
+                }
+
                 for (const [productId, totalQty] of Array.from(productQtyMap.entries())) {
                     const product = productMap.get(productId)
-                    const updatedStock = await tx.outletProduct.updateMany({
-                        where: {
-                            outletId,
-                            productId,
-                            stock: { gte: totalQty },
-                        },
-                        data: {
-                            stock: { decrement: totalQty },
-                        },
-                    })
-
-                    if (updatedStock.count === 0) {
-                        throw new Error(`Insufficient stock for ${product?.name || productId} in concurrent checkout`)
-                    }
-
-                    await tx.stockLog.create({
-                        data: {
-                            outletId,
-                            productId,
-                            type: 'OUT',
-                            quantity: totalQty,
-                            note: `Table Session #${id} (${session.table.name})`,
-                        },
+                    addDecrement(productId, totalQty, product?.name || String(productId))
+                    stockLogs.push({
+                        outletId,
+                        productId,
+                        type: 'OUT',
+                        quantity: totalQty,
+                        note: `Table Session #${id} (${session.table.name})`,
                     })
 
                     const recipe = recipeMap.get(productId)
                     if (recipe) {
                         for (const ri of recipe) {
                             const used = ri.quantity * totalQty
-                            const updatedIng = await tx.outletProduct.updateMany({
-                                where: {
-                                    outletId,
-                                    productId: ri.ingredientId,
-                                    stock: { gte: used },
-                                },
-                                data: {
-                                    stock: { decrement: used },
-                                },
-                            })
-
-                            if (updatedIng.count === 0) {
-                                throw new Error(`Insufficient stock for recipe ingredient #${ri.ingredientId} in concurrent checkout`)
-                            }
-
-                            await tx.stockLog.create({
-                                data: {
-                                    outletId,
-                                    productId: ri.ingredientId,
-                                    type: 'OUT',
-                                    quantity: used,
-                                    note: `Table Session #${id} (ingredient)`,
-                                },
+                            addDecrement(ri.ingredientId, used, `recipe ingredient #${ri.ingredientId}`)
+                            stockLogs.push({
+                                outletId,
+                                productId: ri.ingredientId,
+                                type: 'OUT',
+                                quantity: used,
+                                note: `Table Session #${id} (ingredient)`,
                             })
                         }
                     }
+                }
+
+                await Promise.all(
+                    Array.from(stockDecrements.entries()).map(async ([productId, { qty, label }]) => {
+                        const updatedStock = await tx.outletProduct.updateMany({
+                            where: { outletId, productId, stock: { gte: qty } },
+                            data: { stock: { decrement: qty } },
+                        })
+                        if (updatedStock.count === 0) {
+                            throw new Error(`Insufficient stock for ${label} in concurrent checkout`)
+                        }
+                    })
+                )
+
+                if (stockLogs.length > 0) {
+                    await tx.stockLog.createMany({ data: stockLogs })
                 }
 
                 if (session.customerId) {

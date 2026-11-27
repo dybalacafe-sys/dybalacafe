@@ -189,64 +189,60 @@ export const salesService = {
         },
       })
 
-      // Concurrency-Safe Atomic Decrements
+      // Concurrency-Safe Atomic Decrements (aggregated per productId to avoid duplicate updates)
+      const stockDecrements = new Map<number, { qty: number; label: string }>()
+      const stockLogs: { outletId: number; productId: number; type: string; quantity: number; note: string }[] = []
+
+      const addDecrement = (productId: number, qty: number, label: string) => {
+        const existing = stockDecrements.get(productId)
+        if (existing) {
+          existing.qty += qty
+        } else {
+          stockDecrements.set(productId, { qty, label })
+        }
+      }
+
       for (const item of saleItems) {
         const product = productMap.get(item.productId)
-        const updated = await tx.outletProduct.updateMany({
-          where: {
-            outletId,
-            productId: item.productId,
-            stock: { gte: item.quantity },
-          },
-          data: {
-            stock: { decrement: item.quantity },
-          },
-        })
-
-        if (updated.count === 0) {
-          throw new Error(`Insufficient stock for ${product?.name || item.productId} (concurrent sale conflict)`)
-        }
-
-        await tx.stockLog.create({
-          data: {
-            outletId,
-            productId: item.productId,
-            type: 'OUT',
-            quantity: item.quantity,
-            note: `Sale #${s.id}`,
-          },
+        addDecrement(item.productId, item.quantity, product?.name || String(item.productId))
+        stockLogs.push({
+          outletId,
+          productId: item.productId,
+          type: 'OUT',
+          quantity: item.quantity,
+          note: `Sale #${s.id}`,
         })
 
         const recipe = recipeMap.get(item.productId)
         if (recipe) {
           for (const ri of recipe) {
             const used = ri.quantity * item.quantity
-            const updatedIng = await tx.outletProduct.updateMany({
-              where: {
-                outletId,
-                productId: ri.ingredientId,
-                stock: { gte: used },
-              },
-              data: {
-                stock: { decrement: used },
-              },
-            })
-
-            if (updatedIng.count === 0) {
-              throw new Error(`Insufficient stock for recipe ingredient #${ri.ingredientId} in concurrent checkout`)
-            }
-
-            await tx.stockLog.create({
-              data: {
-                outletId,
-                productId: ri.ingredientId,
-                type: 'OUT',
-                quantity: used,
-                note: `Sale #${s.id} (ingredient)`,
-              },
+            addDecrement(ri.ingredientId, used, `recipe ingredient #${ri.ingredientId}`)
+            stockLogs.push({
+              outletId,
+              productId: ri.ingredientId,
+              type: 'OUT',
+              quantity: used,
+              note: `Sale #${s.id} (ingredient)`,
             })
           }
         }
+      }
+
+      await Promise.all(
+        Array.from(stockDecrements.entries()).map(async ([productId, { qty, label }]) => {
+          const updated = await tx.outletProduct.updateMany({
+            where: { outletId, productId, stock: { gte: qty } },
+            data: { stock: { decrement: qty } },
+          })
+          if (updated.count === 0) {
+            throw new Error(`Insufficient stock for ${label} (concurrent sale conflict)`)
+          }
+        })
+      )
+
+      if (stockLogs.length > 0) {
+        await tx.stockLog.createMany({ data: stockLogs })
       }
 
       if (resolvedCustomerId && pointsEarned > 0) {
@@ -257,6 +253,6 @@ export const salesService = {
       }
 
       return s
-    })
+    }, { timeout: 15000 })
   },
 }
